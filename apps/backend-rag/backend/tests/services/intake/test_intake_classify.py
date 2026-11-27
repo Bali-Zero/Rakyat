@@ -546,7 +546,7 @@ async def test_ocr_pages_unreadable_yields_empty_not_invented(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# ocr_pages -- optional cloud OCR routing (Gemini primary, Ollama fallback)
+# ocr_pages -- cloud Gemini OCR is retired (legacy env values fail closed to Ollama)
 # ---------------------------------------------------------------------------
 
 
@@ -555,72 +555,22 @@ def test_intake_ocr_provider_defaults_to_ollama(monkeypatch):
     assert cls._ocr_provider() == "ollama"
 
 
+@pytest.mark.parametrize("legacy", ["gemini", "gemini_first", "gemini-first"])
+def test_ocr_provider_legacy_gemini_fails_closed_to_ollama(monkeypatch, legacy):
+    monkeypatch.setenv("INTAKE_OCR_PROVIDER", legacy)
+    assert cls._ocr_provider() == "ollama"
+
+
 @pytest.mark.asyncio
-async def test_gemini_vision_uses_genai_client_inline_image(monkeypatch):
+async def test_ocr_pages_legacy_gemini_env_blocks_cloud_and_uses_ollama(monkeypatch):
     calls = []
-
-    class _FakeGenAIClient:
-        is_available = True
-
-        async def generate_content(self, **kwargs):
-            calls.append(kwargs)
-            return {"text": '{"text": "PASSPORT\\nPassport No YA1234567"}'}
-
-    monkeypatch.setattr(
-        "backend.llm.genai_client.get_genai_client",
-        lambda: _FakeGenAIClient(),
-    )
-
-    out = await cls._gemini_vision("Zm9v", prompt="OCR PROMPT", num_predict=77)
-
-    assert out == "PASSPORT\nPassport No YA1234567"
-    assert calls[0]["model"] == cls._GEMINI_OCR_MODEL
-    assert calls[0]["max_output_tokens"] == 77
-    assert calls[0]["temperature"] == 0.0
-    assert calls[0]["endpoint"] == "intake_ocr"
-    assert calls[0]["contents"] == [
-        {"text": "OCR PROMPT"},
-        {"inline_data": {"mime_type": "image/png", "data": "Zm9v"}},
-    ]
-
-
-@pytest.mark.asyncio
-async def test_ocr_pages_uses_gemini_primary_when_enabled_and_allowed(monkeypatch):
-    async def fake_gemini(b64):
-        return "PASSPORT\nPassport No YA1234567"
-
-    async def fail_ollama(model, b64):
-        raise AssertionError("Ollama must not run when Gemini primary succeeds")
-
-    monkeypatch.setenv("INTAKE_OCR_PROVIDER", "gemini")
-    monkeypatch.setattr(cls, "_GEMINI_OCR_AUTH_FAILED", False)
-    monkeypatch.setattr(cls, "_cloud_vision_allowed", lambda: True)
-    monkeypatch.setattr(cls, "_gemini_vision", fake_gemini)
-    monkeypatch.setattr(cls, "_ollama_vision", fail_ollama)
-
-    out = await cls.ocr_pages([_FakePage(0, b"x")])
-
-    assert out[0]["via"] == "gemini"
-    assert out[0]["model"] == cls._GEMINI_OCR_MODEL
-    assert out[0]["text"] == "PASSPORT\nPassport No YA1234567"
-
-
-@pytest.mark.asyncio
-async def test_ocr_pages_blocks_gemini_when_gate_denies_then_uses_ollama(monkeypatch):
-    calls = []
-
-    async def fail_gemini(b64):
-        raise AssertionError("Gemini must not run when cloud gate denies")
 
     async def fake_ollama(model, b64):
         calls.append(model)
         return ("NOMOR POKOK WAJIB PAJAK", "")
 
     monkeypatch.setenv("INTAKE_OCR_PROVIDER", "gemini")
-    monkeypatch.setattr(cls, "_GEMINI_OCR_AUTH_FAILED", False)
-    monkeypatch.setattr(cls, "_cloud_vision_allowed", lambda: False)
     monkeypatch.setattr(cls, "_note_cloud_ocr_blocked", lambda context: calls.append(context))
-    monkeypatch.setattr(cls, "_gemini_vision", fail_gemini)
     monkeypatch.setattr(cls, "_ollama_vision", fake_ollama)
 
     out = await cls.ocr_pages([_FakePage(0, b"x")])
@@ -630,58 +580,10 @@ async def test_ocr_pages_blocks_gemini_when_gate_denies_then_uses_ollama(monkeyp
     assert out[0]["text"] == "NOMOR POKOK WAJIB PAJAK"
     assert calls[0] == "intake.classify.ocr_pages"
     assert calls[1:] == [cls._OCR_FALLBACK]
+    assert not hasattr(cls, "_gemini_vision")
 
 
-@pytest.mark.asyncio
-async def test_ocr_pages_gemini_empty_falls_back_to_ollama(monkeypatch):
-    calls = []
-
-    async def fake_gemini(b64):
-        calls.append("gemini")
-        return ""
-
-    async def fake_ollama(model, b64):
-        calls.append(model)
-        return ("IZIN TINGGAL TERBATAS", "")
-
-    monkeypatch.setenv("INTAKE_OCR_PROVIDER", "gemini")
-    monkeypatch.setattr(cls, "_GEMINI_OCR_AUTH_FAILED", False)
-    monkeypatch.setattr(cls, "_cloud_vision_allowed", lambda: True)
-    monkeypatch.setattr(cls, "_gemini_vision", fake_gemini)
-    monkeypatch.setattr(cls, "_ollama_vision", fake_ollama)
-
-    out = await cls.ocr_pages([_FakePage(0, b"x")])
-
-    assert out[0]["via"] == "response"
-    assert out[0]["model"] == cls._OCR_FALLBACK
-    assert out[0]["text"] == "IZIN TINGGAL TERBATAS"
-    assert calls == ["gemini", cls._OCR_FALLBACK]
-
-
-@pytest.mark.asyncio
-async def test_ocr_pages_disables_gemini_after_auth_failure(monkeypatch):
-    calls = []
-
-    async def fail_gemini(b64):
-        calls.append("gemini")
-        raise RuntimeError("403 PERMISSION_DENIED API key was reported as leaked")
-
-    async def fake_ollama(model, b64):
-        calls.append(model)
-        return ("PASSPORT", "")
-
-    monkeypatch.setenv("INTAKE_OCR_PROVIDER", "gemini")
-    monkeypatch.setattr(cls, "_GEMINI_OCR_AUTH_FAILED", False)
-    monkeypatch.setattr(cls, "_cloud_vision_allowed", lambda: True)
-    monkeypatch.setattr(cls, "_gemini_vision", fail_gemini)
-    monkeypatch.setattr(cls, "_ollama_vision", fake_ollama)
-
-    out = await cls.ocr_pages([_FakePage(0, b"x"), _FakePage(1, b"y")])
-
-    assert [page["via"] for page in out] == ["response", "response"]
-    assert calls == ["gemini", cls._OCR_FALLBACK, cls._OCR_FALLBACK]
-
-
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # preprocess -- mime detection (no model)
 # ---------------------------------------------------------------------------
@@ -718,11 +620,11 @@ _BANNED_CLOUD_TOKENS = re.compile(r"openai|anthropic|googleapis", re.IGNORECASE)
 
 
 def test_intake_source_uses_cloud_only_through_gate():
-    """Intake may contain Gemini OCR, but not an ungated raw cloud endpoint.
+    """Intake is strict-local again: no cloud endpoint and no GenAI client.
 
-    The old contract was strict-local source only. The new contract is narrower
-    and explicit: default provider remains Ollama, and any Gemini path must go
-    through the shared cloud_vision_gate helper rather than a raw HTTP endpoint.
+    Cloud Gemini OCR was removed (owner order 2026-11-27). A legacy
+    INTAKE_OCR_PROVIDER=gemini* value only reports to the shared
+    cloud_vision_gate audit signal, then runs the local Ollama cascade.
     """
     for f in _SOURCE_FILES:
         text = f.read_text()
@@ -731,7 +633,8 @@ def test_intake_source_uses_cloud_only_through_gate():
             assert m is None, f"raw cloud token '{m.group(0)}' in {f.name}:{lineno}: {line.strip()}"
     assert cls._ocr_provider() == "ollama"
     src = Path(cls.__file__).read_text()
-    assert "_cloud_vision_allowed" in src
+    assert "genai_client" not in src
+    assert "_gemini_vision" not in src
     assert "_note_cloud_ocr_blocked" in src
 
 

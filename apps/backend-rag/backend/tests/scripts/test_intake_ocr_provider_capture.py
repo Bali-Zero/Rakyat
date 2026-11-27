@@ -46,18 +46,6 @@ async def _fake_empty_ocr_pages(_pages):
     ]
 
 
-async def _fake_local_fallback_pages(_pages):
-    return [
-        {
-            "page": 0,
-            "text": "PASSPORT\nPassport No X9900001",
-            "confidence": 0.9,
-            "model": "qwen2.5vl:7b",
-            "via": "response",
-        }
-    ]
-
-
 async def test_capture_manifest_writes_quality_jsonl(tmp_path: Path) -> None:
     module = _load_script_module()
     image_path = tmp_path / "passport.png"
@@ -127,7 +115,7 @@ async def test_capture_marks_empty_provider_output_as_error(tmp_path: Path) -> N
     samples = module.load_manifest(manifest_path)
     results = await module.capture_samples(
         samples,
-        provider="gemini",
+        provider="apple_vision",
         output_path=output_path,
         ocr_pages_fn=_fake_empty_ocr_pages,
     )
@@ -139,42 +127,7 @@ async def test_capture_marks_empty_provider_output_as_error(tmp_path: Path) -> N
     assert row["error"] == "empty_ocr_text"
 
 
-async def test_capture_marks_gemini_local_fallback_as_error(tmp_path: Path) -> None:
-    module = _load_script_module()
-    image_path = tmp_path / "passport.png"
-    image_path.write_bytes(b"not-a-real-png")
-    manifest_path = tmp_path / "manifest.jsonl"
-    manifest_path.write_text(
-        json.dumps(
-            {
-                "id": "passport-fallback",
-                "image_path": "passport.png",
-                "expected_doc_type": "passport",
-                "expected_fields": {"passport_no": "X9900001"},
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    output_path = tmp_path / "provider.jsonl"
-
-    samples = module.load_manifest(manifest_path)
-    results = await module.capture_samples(
-        samples,
-        provider="gemini",
-        output_path=output_path,
-        ocr_pages_fn=_fake_local_fallback_pages,
-    )
-
-    assert results[0]["ocr_text"] == "PASSPORT\nPassport No X9900001"
-    assert results[0]["models"] == ["qwen2.5vl:7b"]
-    assert results[0]["vias"] == ["response"]
-    assert results[0]["error"] == "provider_fallback_to_local_ocr"
-    [row] = [json.loads(line) for line in output_path.read_text(encoding="utf-8").splitlines()]
-    assert row["error"] == "provider_fallback_to_local_ocr"
-
-
-def test_cli_requires_explicit_cloud_flag_for_gemini(tmp_path: Path) -> None:
+def test_cli_rejects_the_retired_gemini_provider(tmp_path: Path) -> None:
     manifest_path = tmp_path / "manifest.jsonl"
     output_path = tmp_path / "provider.jsonl"
 
@@ -195,5 +148,5 @@ def test_cli_requires_explicit_cloud_flag_for_gemini(tmp_path: Path) -> None:
     )
 
     assert completed.returncode == 2
-    assert "--allow-cloud-vision" in completed.stderr
+    assert "gemini" in completed.stderr
     assert not output_path.exists()

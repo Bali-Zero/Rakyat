@@ -11,23 +11,18 @@ from backend.services.multimodal.pdf_vision_service import PDFVisionService
 
 
 # ---------------------------------------------------------------------------
-# PII-sovereignty gate on the Gemini fallback (SYMBIOSIS Law 2 / UU PDP Art.56)
+# Cloud Gemini fallback is permanently disabled (SYMBIOSIS Law 2 / UU PDP Art.56)
 # ---------------------------------------------------------------------------
 
 
 class TestAnalyzeViaGeminiPIIGate:
     @pytest.mark.asyncio
     async def test_blocked_returns_none_without_touching_client(self) -> None:
-        """When cloud vision is NOT allowed, _analyze_via_gemini returns None and
-        never constructs/calls the genai client (no PII leaves the machine)."""
+        """Cloud Gemini vision is permanently disabled: _analyze_via_gemini returns None
+        and never constructs/calls the genai client (no PII leaves the machine)."""
         svc = PDFVisionService(api_key="dummy")
-        # If the gate failed open, this spy would be called → test would catch it.
         spy_get_client = MagicMock(side_effect=AssertionError("client must NOT be built when blocked"))
         with (
-            patch(
-                "backend.services.multimodal.cloud_vision_gate.cloud_vision_allowed",
-                return_value=False,
-            ),
             patch(
                 "backend.services.multimodal.cloud_vision_gate.note_cloud_ocr_blocked",
             ) as note,
@@ -38,21 +33,6 @@ class TestAnalyzeViaGeminiPIIGate:
         note.assert_called_once()
         # the context string identifies the chokepoint
         assert "pdf_vision_service" in note.call_args.args[0]
-
-    @pytest.mark.asyncio
-    async def test_allowed_but_no_client_returns_none(self) -> None:
-        """When allowed but the genai client is unavailable, returns None via the
-        normal path (proves the gate doesn't change happy/empty behavior)."""
-        svc = PDFVisionService(api_key="dummy")
-        with (
-            patch(
-                "backend.services.multimodal.cloud_vision_gate.cloud_vision_allowed",
-                return_value=True,
-            ),
-            patch.object(svc, "_get_genai_client", MagicMock(return_value=None)),
-        ):
-            result = await svc._analyze_via_gemini("prompt", "Zm9v")
-        assert result is None
 
 
 @pytest.mark.asyncio

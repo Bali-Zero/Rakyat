@@ -75,7 +75,6 @@ async def test_query_with_vision_returns_blocked_response_when_cloud_gate_is_clo
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     blocked = []
-    monkeypatch.setattr(cloud_vision_gate, "cloud_vision_allowed", lambda: False)
     monkeypatch.setattr(cloud_vision_gate, "note_cloud_ocr_blocked", blocked.append)
 
     service = VisionRAGService()

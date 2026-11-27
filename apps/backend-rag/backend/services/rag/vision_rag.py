@@ -235,39 +235,11 @@ Output JSON:
             return None
 
     async def _vision_via_gemini(self, prompt: str, image_base64: str) -> str | None:
-        """Fallback: Analyze image using Gemini Vision API.
+        """Permanently disabled cloud Gemini Vision fallback (local Ollama only)."""
+        from backend.services.multimodal.cloud_vision_gate import note_cloud_ocr_blocked
 
-        PII-sovereignty gated (SYMBIOSIS Law 2 / UU PDP Art. 56): blocked unless
-        OCR_ALLOW_CLOUD_VISION=true; returns None when blocked so the caller
-        degrades locally.
-        """
-        from backend.services.multimodal.cloud_vision_gate import (
-            cloud_vision_allowed,
-            note_cloud_ocr_blocked,
-        )
-
-        if not cloud_vision_allowed():
-            note_cloud_ocr_blocked("rag.vision_rag.VisionRAG._vision_via_gemini")
-            return None
-        try:
-            client = self._get_genai_client()
-            if not client or not client.is_available:
-                return None
-
-            contents = [
-                {"text": prompt},
-                {"inline_data": {"mime_type": "image/png", "data": image_base64}},
-            ]
-
-            result = await client.generate_content(
-                contents=contents,
-                model=self.vision_model_name,
-                max_output_tokens=8192,
-            )
-            return result.get("text") if result else None
-        except Exception as e:
-            logger.warning("VisionRAG Gemini error: %s", e)
-            return None
+        note_cloud_ocr_blocked("rag.vision_rag.VisionRAG._vision_via_gemini")
+        return None
 
     async def _extract_tables(self, page, page_num: int) -> list[VisualElement]:
         """
@@ -330,98 +302,16 @@ Output JSON:
     ) -> dict[str, Any]:
         """
         Query che considera sia testo che elementi visuali.
+
+        Cloud Gemini Vision is permanently disabled (SYMBIOSIS Law 2 / UU PDP Art. 56).
         """
-        # 1. Prepara contesto testuale
-        text_context = "\n\n".join(
-            ["Document: {doc.doc_id}\n{doc.text_content[:5000]}" for doc in documents],
-        )
+        from backend.services.multimodal.cloud_vision_gate import note_cloud_ocr_blocked
 
-        # 2. Trova elementi visuali rilevanti
-        relevant_visuals = []
-        for doc in documents:
-            for element in doc.visual_elements:
-                # Check rilevanza basata su keyword nella descrizione
-                if self._is_relevant(query, element):
-                    relevant_visuals.append(element)
-
-        # 3. Prepara prompt multi-modale
-        prompt_parts = [
-            f"""
-            Answer this question using both text and visual information provided.
-
-            Question: {query}
-
-            Text Context:
-            {{text_context[:10000]}}
-
-            Visual Elements Found: {len(relevant_visuals)}
-            """,
-        ]
-
-        # Aggiungi descrizioni elementi visuali
-        for _i, visual in enumerate(relevant_visuals[:5]):  # Max 5 immagini
-            prompt_parts.append("\n\nVisual {i+1} ({visual.element_type}):")
-            prompt_parts.append("Description: {visual.description}")
-            prompt_parts.append("Extracted Text: {visual.extracted_text[:500]}")
-
-            if include_images:
-                # Aggiungi immagine al prompt
-                image = Image.open(io.BytesIO(visual.image_data))
-                prompt_parts.append(image)
-
-        prompt_parts.append("\n\nProvide a comprehensive answer using all available information:")
-
-        # 4. Query Gemini Vision
-        # PII sovereignty gate (SYMBIOSIS Law 2 / UU PDP Art. 56): rendered document
-        # pages (may contain passport/visa/NPWP) must NOT go to Google unless
-        # OCR_ALLOW_CLOUD_VISION=true.
-        from backend.services.multimodal.cloud_vision_gate import (
-            cloud_vision_allowed,
-            note_cloud_ocr_blocked,
-        )
-
-        if not cloud_vision_allowed():
-            note_cloud_ocr_blocked("rag.vision_rag.VisionRAG.query_with_vision")
-            return {
-                "answer": "Vision service unavailable (cloud fallback blocked for PII sovereignty)",
-                "visuals_used": [],
-                "text_context_length": 0,
-            }
-
-        client = self._get_genai_client()
-        if not client or not client.is_available:
-            return {
-                "answer": "Vision service not available",
-                "visuals_used": [],
-                "text_context_length": 0,
-            }
-
-        # Build content for the new SDK
-        import base64
-
-        contents = []
-        for part in prompt_parts:
-            if isinstance(part, str):
-                contents.append({"text": part})
-            elif hasattr(part, "save"):  # PIL Image
-                buffered = io.BytesIO()
-                part.save(buffered, format="PNG")
-                image_base64 = base64.b64encode(buffered.getvalue()).decode()
-                contents.append({"inline_data": {"mime_type": "image/png", "data": image_base64}})
-
-        result_response = await client.generate_content(
-            contents=contents,
-            model=self.vision_model_name,
-            max_output_tokens=8192,
-        )
-
+        note_cloud_ocr_blocked("rag.vision_rag.VisionRAG.query_with_vision")
         return {
-            "answer": result_response.get("text", ""),
-            "visuals_used": [
-                {"type": v.element_type, "page": v.page_number, "description": v.description}
-                for v in relevant_visuals[:5]
-            ],
-            "text_context_length": len(text_context),
+            "answer": "Vision service unavailable (cloud fallback blocked for PII sovereignty)",
+            "visuals_used": [],
+            "text_context_length": 0,
         }
 
     def _is_relevant(self, query: str, element: VisualElement) -> bool:

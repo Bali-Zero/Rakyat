@@ -339,31 +339,23 @@ async def test_classifier_keeps_a_known_label_readable(caplog: pytest.LogCapture
 
 
 @pytest.mark.asyncio
-async def test_gemini_cli_failure_logs_rc_and_length_not_stderr(
+async def test_crm_enhanced_ocr_never_invokes_gemini_cli_or_logs_prompt_pii(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     from backend.app.routers import crm_enhanced
 
-    process = MagicMock()
-    process.returncode = 1
-    process.communicate = AsyncMock(return_value=(b"", f"echo of input {SENTINEL}".encode()))
-    genai = MagicMock()
-    genai.is_available = False
     caplog.set_level(logging.DEBUG)
     with (
         patch("backend.llm.ollama_client.is_ollama_available", new=AsyncMock(return_value=False)),
+        patch("shutil.which", side_effect=AssertionError("Gemini CLI must never be looked up")),
         patch(
-            "backend.services.multimodal.cloud_vision_gate.cloud_vision_allowed",
-            return_value=True,
+            "asyncio.create_subprocess_exec",
+            new=AsyncMock(side_effect=AssertionError("Gemini CLI must never be spawned")),
         ),
-        patch("shutil.which", return_value="/usr/local/bin/gemini"),
-        patch("asyncio.create_subprocess_exec", new=AsyncMock(return_value=process)),
-        patch("backend.llm.genai_client.get_genai_client", return_value=genai),
-        pytest.raises(RuntimeError),
+        pytest.raises(RuntimeError, match="PII sovereignty"),
     ):
-        await crm_enhanced._gemini_ocr(b"\xff\xd8\xff", "image/jpeg", "extract")
+        await crm_enhanced._gemini_ocr(b"\xff\xd8\xff", "image/jpeg", f"extract {SENTINEL}")
 
-    assert any("Gemini CLI failed (rc=1" in r.getMessage() for r in caplog.records)
     assert _leaks(caplog) == []
 
 
@@ -526,10 +518,6 @@ async def test_ollama_vision_json_error_never_logs_the_response(
     with (
         patch("backend.llm.ollama_client.is_ollama_available", new=AsyncMock(return_value=True)),
         patch("httpx.AsyncClient", _Client),
-        patch(
-            "backend.services.multimodal.cloud_vision_gate.cloud_vision_allowed",
-            return_value=False,
-        ),
         pytest.raises(RuntimeError),
     ):
         await crm_enhanced._gemini_ocr(b"\xff\xd8\xff", "image/jpeg", "extract")

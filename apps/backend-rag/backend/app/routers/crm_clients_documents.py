@@ -267,65 +267,26 @@ Use null for unclear fields. Return ONLY JSON."""
                     ollama_ok = True
                     logger.info(f"Passport OCR via Ollama: len={len(response_text)}")
                 else:
-                    logger.warning("Ollama returned empty response, falling back to Gemini")
+                    logger.warning("Ollama returned empty response; cloud Gemini Vision OCR is permanently disabled")
             else:
                 logger.warning(
-                    f"Ollama OCR failed: HTTP {ollama_response.status_code}, falling back to Gemini"
+                    f"Ollama OCR failed: HTTP {ollama_response.status_code}; cloud Gemini Vision OCR is permanently disabled"
                 )
         except Exception as e:
-            logger.warning("Ollama unreachable (%s), falling back to Gemini Vision", e)
+            logger.warning("Ollama unreachable (%s); cloud Gemini Vision OCR is permanently disabled", e)
 
-        # Fallback: Gemini API Vision
+        # Cloud Gemini Vision is permanently disabled (SYMBIOSIS Law 2 / UU PDP Art. 56).
         if not ollama_ok:
-            # PII sovereignty gate (SYMBIOSIS Law 2 / UU PDP Art. 56): the passport
-            # image must NOT be sent to Google unless OCR_ALLOW_CLOUD_VISION=true.
-            from backend.services.multimodal.cloud_vision_gate import (
-                cloud_vision_allowed,
-                note_cloud_ocr_blocked,
+            from backend.services.multimodal.cloud_vision_gate import note_cloud_ocr_blocked
+
+            note_cloud_ocr_blocked("crm_clients_documents.extract_passport_enhanced")
+            return PassportPreviewResponse(
+                success=False,
+                message=(
+                    "Vision OCR unavailable: local Ollama down and cloud fallback "
+                    "blocked for PII sovereignty (cloud Gemini OCR disabled)"
+                ),
             )
-
-            if not cloud_vision_allowed():
-                note_cloud_ocr_blocked("crm_clients_documents.extract_passport_enhanced")
-                return PassportPreviewResponse(
-                    success=False,
-                    message=(
-                        "Vision OCR unavailable: local Ollama down and cloud fallback "
-                        "blocked for PII sovereignty (OCR_ALLOW_CLOUD_VISION=false)"
-                    ),
-                )
-
-            from backend.llm.genai_client import GENAI_AVAILABLE, get_genai_client
-
-            if not GENAI_AVAILABLE:
-                return PassportPreviewResponse(
-                    success=False,
-                    message="Vision OCR service unavailable (no Ollama or Gemini configured)",
-                )
-
-            genai_client = get_genai_client()
-            if not genai_client.is_available:
-                return PassportPreviewResponse(
-                    success=False,
-                    message="Vision OCR service unavailable (Gemini not configured)",
-                )
-
-            contents = [
-                ocr_prompt,
-                {
-                    "inline_data": {
-                        "mime_type": request.mime_type,
-                        "data": base64.b64encode(image_data).decode(),
-                    },
-                },
-            ]
-
-            result = await genai_client.generate_content(
-                contents=contents,
-                model="gemini-2.5-flash",
-                max_output_tokens=4096,
-            )
-            response_text = result.get("text", "")
-            logger.info(f"Passport OCR via Gemini API: len={len(response_text)}")
 
         if not response_text:
             return PassportPreviewResponse(

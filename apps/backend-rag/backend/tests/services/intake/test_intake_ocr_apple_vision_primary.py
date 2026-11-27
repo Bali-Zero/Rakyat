@@ -105,8 +105,8 @@ def ollama(monkeypatch: pytest.MonkeyPatch) -> _Ollama:
         ("vision", "apple_vision"),
         ("  Apple_Vision \n", "apple_vision"),
         ("APPLE-VISION", "apple_vision"),
-        ("gemini", "gemini"),
-        ("gemini_first", "gemini"),
+        ("gemini", "ollama"),  # retired cloud provider fails closed to local Ollama
+        ("gemini_first", "ollama"),
         ("ollama", "ollama"),
         ("", "ollama"),
         ("apple", "ollama"),  # not an alias: a typo must fail closed to local Ollama
@@ -347,7 +347,6 @@ async def test_other_providers_never_touch_apple_vision(
         monkeypatch.delenv("INTAKE_OCR_PROVIDER", raising=False)
     else:
         monkeypatch.setenv("INTAKE_OCR_PROVIDER", provider)
-    monkeypatch.setattr(cls, "_cloud_vision_allowed", lambda: False)
     monkeypatch.setattr(cls, "_note_cloud_ocr_blocked", lambda context: None)
 
     out = await cls.ocr_pages([_Page()])

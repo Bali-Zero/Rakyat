@@ -9,7 +9,6 @@ Provides endpoints for:
 """
 
 import asyncio
-import base64
 import logging
 import re as regex
 from datetime import datetime, timezone
@@ -148,17 +147,12 @@ async def _download_drive_file(file_id: str) -> tuple[bytes, str]:
 
 async def _gemini_ocr(image_data: bytes, mime_type: str, prompt: str) -> str:
     """
-    Run OCR on image data.
-    Strategy:
-      1. Ollama qwen2.5vl:7b (local, free, confirmed working for passports)
-      2. Gemini CLI (free via Ultra subscription)
-      3. Gemini API (paid, fast fallback)
+    Run OCR on image data, LOCAL ONLY (Ollama qwen2.5vl:7b).
+    The Gemini CLI and Gemini API tiers were removed (owner order 2026-11-27):
+    when local vision is unavailable the call raises and the caller degrades.
     Returns raw text response from the model.
     """
-    import asyncio
     import base64 as _base64
-    import shutil
-    import tempfile
 
     # --- Attempt 1: Ollama qwen2.5vl:7b (local, free) ---
     try:
@@ -193,127 +187,19 @@ async def _gemini_ocr(image_data: bytes, mime_type: str, prompt: str) -> str:
                         f"OCR via Ollama {_OLLAMA_VISION_MODEL} (local): {len(content)} chars",
                     )
                     return content
-                logger.warning("Ollama vision returned empty, falling back to Gemini")
+                logger.warning("Ollama vision returned empty; cloud OCR fallback is permanently disabled")
     except Exception as _e:
-        logger.warning("Ollama vision error: %s, falling back to Gemini", type(_e).__name__)
+        logger.warning("Ollama vision error: %s; cloud OCR fallback is permanently disabled", type(_e).__name__)
 
-    # --- PII sovereignty gate (SYMBIOSIS Law 2 / UU PDP Art. 56) ---
-    # Both fallback tiers below (Gemini CLI + Gemini API) send the document image
-    # (passport/KTP/NPWP/akta/visa) to Google = cross-border PII transfer. Block
-    # unless OCR_ALLOW_CLOUD_VISION=true (default false). When blocked, degrade to
-    # the no-result path so the caller falls back to local/manual handling — never
-    # send the document to the cloud.
-    from backend.services.multimodal.cloud_vision_gate import (
-        cloud_vision_allowed,
-        note_cloud_ocr_blocked,
+    # Cloud Gemini OCR is permanently disabled (SYMBIOSIS Law 2 / UU PDP Art. 56):
+    # record the degradation and raise so the caller falls back to manual handling.
+    from backend.services.multimodal.cloud_vision_gate import note_cloud_ocr_blocked
+
+    note_cloud_ocr_blocked("crm_enhanced._gemini_ocr")
+    raise RuntimeError(
+        "Cloud OCR fallback blocked for PII sovereignty (cloud Gemini OCR disabled); "
+        "local Ollama vision unavailable",
     )
-
-    if not cloud_vision_allowed():
-        note_cloud_ocr_blocked("crm_enhanced._gemini_ocr")
-        raise RuntimeError(
-            "Cloud OCR fallback blocked for PII sovereignty (OCR_ALLOW_CLOUD_VISION=false); "
-            "local Ollama vision unavailable",
-        )
-
-    # --- Attempt 2: Gemini CLI (free via Ultra subscription) ---
-    gemini_path = shutil.which("gemini")
-    if gemini_path:
-        try:
-            # Determine file extension from mime type
-            ext_map = {
-                "image/jpeg": ".jpg",
-                "image/png": ".png",
-                "image/webp": ".webp",
-                "application/pdf": ".pdf",
-            }
-            ext = ext_map.get(mime_type, ".jpg")
-
-            with tempfile.NamedTemporaryFile(suffix=ext, delete=False, dir="/tmp") as f:
-                f.write(image_data)
-                tmp_path = f.name
-
-            try:
-                cli_prompt = (
-                    f"Use read_file to read the image at {tmp_path}. "
-                    f"{prompt} Return JSON only, null for missing fields."
-                )
-                process = await asyncio.create_subprocess_exec(
-                    gemini_path,
-                    "-p",
-                    cli_prompt,
-                    "-o",
-                    "text",
-                    "--yolo",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd="/tmp",
-                )
-                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=90)
-
-                if process.returncode == 0 and stdout:
-                    response_text = stdout.decode("utf-8", errors="replace").strip()
-                    # Remove the "Shell cwd was reset" line if present
-                    lines = [
-                        line
-                        for line in response_text.split("\n")
-                        if not line.startswith("Shell cwd was reset")
-                    ]
-                    response_text = "\n".join(lines).strip()
-                    if response_text:
-                        logger.info(f"OCR via Gemini CLI (free): {len(response_text)} chars")
-                        return response_text
-                    logger.warning("Gemini CLI returned empty response, falling back to API")
-                else:
-                    logger.warning(
-                        "Gemini CLI failed (rc=%s, stderr %d bytes)",
-                        process.returncode,
-                        len(stderr or b""),
-                    )
-            finally:
-                import os
-
-                os.unlink(tmp_path)
-
-        except asyncio.TimeoutError:
-            logger.warning("Gemini CLI timed out (90s), falling back to API")
-            try:
-                import os
-
-                os.unlink(tmp_path)
-            except Exception as e:
-                logger.debug("Could not remove temp file %s: %s", tmp_path, type(e).__name__)
-        except Exception as e:
-            logger.warning("Gemini CLI error: %s, falling back to API", type(e).__name__)
-
-    # --- Attempt 2: Gemini API (paid, fast) ---
-    from backend.llm.genai_client import GENAI_AVAILABLE, get_genai_client
-
-    if not GENAI_AVAILABLE:
-        raise RuntimeError("Neither Gemini CLI nor Gemini API available")
-
-    genai_client = get_genai_client()
-    if not genai_client.is_available:
-        raise RuntimeError("Gemini not configured")
-
-    contents = [
-        prompt,
-        {
-            "inline_data": {
-                "mime_type": mime_type,
-                "data": base64.b64encode(image_data).decode(),
-            },
-        },
-    ]
-
-    result = await genai_client.generate_content(
-        contents=contents,
-        model="gemini-2.5-flash",
-        max_output_tokens=4096,
-    )
-
-    response_text = result.get("text", "")
-    logger.info(f"OCR via Gemini API (paid): {len(response_text)} chars")
-    return response_text
 
 
 async def _auto_ocr_passport(
