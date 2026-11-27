@@ -43345,8 +43345,8 @@ Sektor akomodasi adalah tulang punggung Bali, tetapi juga sektor yang paling ban
 
 **Restoran / Kafe (56101):**
 
-- Lisensi Inti: Sertifikat Laik Sehat (SLHS) — Sertifikat Kebersihan
-- Biaya/Waktu: harga atas permintaan — hubungi Bali Zero; 3–4 minggu pemrosesan
+- Lisensi Inti: Sertifikat Laik Higiene Sanitasi (SLHS) — Sertifikat Higiene dan Sanitasi
+- Biaya/Waktu: IDR 10.000.000 (uji lab pihak ketiga dan pelatihan staf dibayarkan sesuai biaya riil); 3–4 minggu pemrosesan
 - Alkohol (PB-UMKU): Lisensi NPBBKC terpisah diperlukan untuk penjualan alkohol (Kelas A, B, C)
 - Sertifikasi Halal: Harga atas permintaan — hubungi Bali Zero
 
@@ -48362,7 +48362,7 @@ Tabel berikut mencakup setiap kode makanan dan minuman di bawah KBLI 2025 Divisi
 | **56305** | Rumah/Kedai Obat Tradisional                                | Traditional Medicine Shop                                       | Rendah (Low)           | Ya                | HSP, Izin khusus  |
 | **56702** | Warung                                                      | Warung (Local Eatery)                                           | Rendah (Low)           | Ya                | HSP, SLHS, NIB    |
 
-**Keterangan:** HSP = Sertifikat Higiene Sanitasi Pangan. SLHS = Sertifikat Laik Sehat. LSPr = Lembaga Sertifikasi Profesi. NPBBKC = Izin distribusi alkohol.
+**Keterangan:** HSP = Sertifikat Higiene Sanitasi Pangan. SLHS = Sertifikat Laik Higiene Sanitasi. LSPr = Lembaga Sertifikasi Profesi. NPBBKC = Izin distribusi alkohol.
 
 ---
 
@@ -48476,7 +48476,7 @@ HSP adalah label higiene sanitasi dasar yang diperlukan untuk semua bisnis layan
 
 **Siapa yang butuh:** Setiap bisnis F&B di bawah Divisi 56.
 
-### Sertifikat Laik Sehat (SLHS)
+### Sertifikat Laik Higiene Sanitasi (SLHS)
 
 SLHS adalah sertifikasi formal bahwa tempat usaha Anda telah lolos inspeksi kesehatan. Ini diterbitkan oleh Dinas Kesehatan setempat setelah inspeksi di tempat yang mencakup:
 
@@ -48486,7 +48486,7 @@ SLHS adalah sertifikasi formal bahwa tempat usaha Anda telah lolos inspeksi kese
 - Penyimpanan makanan dan kepatuhan rantai dingin (cold chain)
 - Langkah-langkah pengendalian hama (pest control)
 
-Bali Zero menyediakan bantuan sertifikasi SLHS (**harga atas permintaan — hubungi Bali Zero**), yang mencakup persiapan pra-inspeksi, dokumentasi, dan koordinasi dengan Dinas Kesehatan.
+Bali Zero menyediakan bantuan sertifikasi SLHS seharga **IDR 10.000.000** (uji lab pihak ketiga dan pelatihan staf dibayarkan sesuai biaya riil), yang mencakup persiapan pra-inspeksi, dokumentasi, dan koordinasi dengan Dinas Kesehatan.
 
 ### Dokumen Penilaian Mandiri
 
@@ -48591,7 +48591,7 @@ Mendirikan bisnis F&B di Bali membutuhkan navigasi di berbagai instansi, izin, d
 | Izin Alkohol NPBBKC (Golongan A saja) | 4.000.000             | 4-8 minggu   |
 | Izin Alkohol NPBBKC (Golongan B + C saja) | 10.000.000            | 4-8 minggu   |
 | Izin Alkohol NPBBKC (Golongan A + B + C) | 12.000.000            | 4-8 minggu   |
-| SLHS (Sertifikat Laik Sehat) | Atas permintaan       | 3-6 minggu   |
+| SLHS (Sertifikat Higiene Sanitasi) | 10,000,000            | 3-6 minggu   |
 | Sertifikat Halal             | Atas permintaan       | 4-8 minggu   |
 | PIRT (Industri Rumah Tangga) | Atas permintaan       | 2-4 minggu   |
 | Audit & Migrasi Kode KBLI    | Hubungi kami          | 1-2 minggu   |
@@ -51466,7 +51466,7 @@ Bisnis F&B menghadapi persyaratan perizinan berlapis paling banyak dari setiap j
 | Izin                 | Nama Lengkap                                    | Diperlukan Untuk                  | Otoritas Penerbit  | Harga Bali Zero           |
 | -------------------- | ----------------------------------------------- | --------------------------------- | ------------------ | ------------------------- |
 | **HSP**              | Label Higiene Sanitasi Pangan                   | Semua bisnis F&B                  | Dinas Kesehatan    | Termasuk dengan SLHS      |
-| **SLHS**             | Sertifikat Laik Higiene Sanitasi                | Restoran, kafe, katering          | Dinas Kesehatan    | Atas permintaan           |
+| **SLHS**             | Sertifikat Laik Higiene Sanitasi                | Restoran, kafe, katering          | Dinas Kesehatan    | IDR 10,000,000            |
 | **NPBBKC**           | Nomor Pokok Pengusaha Barang Kena Cukai (A+B+C) | Bisnis yang menjual alkohol       | Bea Cukai (Pabean) | Golongan A: IDR 4,000,000; B + C: IDR 10,000,000; A + B + C: IDR 12,000,000 |
 | **Sertifikat Halal** | Sertifikat Halal                                | Produksi makanan, makanan kemasan | BPJPH              | Atas permintaan           |
 | **PIRT**             | Pangan Industri Rumah Tangga                    | Produksi makanan rumahan          | Dinas Kesehatan    | Atas permintaan           |
@@ -51594,7 +51594,7 @@ Perizinan adalah tempat biaya operasional bertambah dengan cepat. Di bawah ini a
 
 | Layanan              | Deskripsi                                | Harga (IDR)           |
 | -------------------- | ---------------------------------------- | --------------------- |
-| **SLHS**             | Sertifikat Sanitasi Kebersihan untuk F&B | Atas permintaan       |
+| **SLHS**             | Sertifikat Sanitasi Kebersihan untuk F&B | 10,000,000            |
 | **NPBBKC (Golongan A)** | Lisensi Alkohol — Golongan A saja        | 4,000,000             |
 | **NPBBKC (Golongan B + C)** | Lisensi Alkohol — Golongan B + C saja    | 10,000,000            |
 | **NPBBKC (Golongan A + B + C)** | Lisensi Alkohol — Golongan A + B + C     | 12,000,000            |

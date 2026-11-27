@@ -716,6 +716,24 @@ def main() -> int:
             "ALTER TABLE practice_types ALTER COLUMN created_at SET DEFAULT NOW()",
         ):
             conn.execute(text(stmt))
+        # SQLModel `required_documents` uses `Column(JSON)` whereas prod stores `text[]`
+        # (verified via \d practice_types). Align CI to `text[]` before `migrations_v2`
+        # runs `ARRAY[...]` and `cardinality(required_documents)`.
+        req_docs_type = conn.execute(
+            text(
+                "SELECT data_type FROM information_schema.columns "
+                "WHERE table_schema = current_schema() "
+                "AND table_name = 'practice_types' "
+                "AND column_name = 'required_documents'"
+            )
+        ).scalar()
+        if req_docs_type in ("json", "jsonb"):
+            conn.execute(
+                text(
+                    "ALTER TABLE practice_types "
+                    "ALTER COLUMN required_documents TYPE TEXT[] USING NULL::text[]"
+                )
+            )
     print("[bootstrap] practice_types prod-only columns ensured (typical_duration_days + is_active + updated_at + active default + created_at default)")
 
     # companies prod-only divergence.

@@ -3,7 +3,8 @@
  * Bali Zero does not sell at that price, in five languages:
  *   - alcohol licence (NPBBKC): IDR 4M (Golongan A only), 10M (B + C only),
  *     12M (A + B + C); the old A+B+C figure was 15M;
- *   - SLHS, halal certification and PIRT: no Bali Zero price, "on request";
+ *   - SLHS: ruled at IDR 10,000,000 on 2026-11-27 (old 9M and stale "on request" fail);
+ *   - halal certification and PIRT: no Bali Zero price, "on request";
  *   - standalone MERP: not a priced item (KITAP + MERP bundles are, and stay);
  *   - the re-entry permit: Bali Zero quotes it on request only, so a cost list
  *     gives it no amount (the state's own fee, labelled as such, stays a fact).
@@ -85,15 +86,48 @@ export function onRequestViolation(line: string): boolean {
   return /\bPIRT\b/.test(line) && hasAmount(line) && !isFactAmount(line);
 }
 
-/** An SLHS label may have its quoted price on the following non-empty line. */
-export function slhsViolation(line: string, nextNonEmpty = ""): boolean {
+const SLHS_OK = new Set([10_000_000]);
+const STALE_SLHS_ON_REQUEST =
+  /on request|atas permintaan|berdasarkan permintaan|sesuai permintaan|su richiesta|sur demande|по запросу/i;
+const WRONG_SLHS_ACRONYM =
+  /Sertifikat Laik Sehat\s*\(\s*SLHS\s*\)|\bSLHS\s*(?:=|—|-)\s*Sertifikat Laik Sehat\b/i;
+// Only an independently stated government/PNBP fee (never a Bali Zero quote or a
+// pass-through exclusion note) is exempt from the 10M SLHS rule.
+const GOV_SLHS_FACT =
+  /\b(?:government(?:al)?|PNBP|pemerintah|governativ[aoie]|gouvernement(?:al\w*)?)\b|государствен\w*/i;
+const isGovSlhsFact = (s: string) =>
+  GOV_SLHS_FACT.test(s) &&
+  !/Bali Zero|pass-through|biaya riil|costi vivi|factur[ée]es au r[ée]el|по факту/i.test(
+    s,
+  );
+
+function invalidSlhsAmount(s: string): boolean {
   return (
-    /\bSLHS\b/.test(line) &&
-    !isFactAmount(line) &&
-    (hasAmount(line) ||
-      (!nextNonEmpty.trimStart().startsWith("|") &&
-        hasAmount(nextNonEmpty) &&
-        !isFactAmount(nextNonEmpty)))
+    [...s.matchAll(SHORT)].length > 0 ||
+    fullAmounts(s).some((n) => !SLHS_OK.has(n))
+  );
+}
+
+/** SLHS was ruled at IDR 10,000,000 on 2026-11-27; catches wrong amounts, wrong acronym expansion, and stale on-request (same or next line). */
+export function slhsViolation(line: string, nextNonEmpty = ""): boolean {
+  if (WRONG_SLHS_ACRONYM.test(line)) return true;
+  if (!/\bSLHS\b/.test(line)) return false;
+  if (!/\b(?:Halal|PIRT)\b/i.test(line) && STALE_SLHS_ON_REQUEST.test(line))
+    return true;
+  if (isGovSlhsFact(line)) return false;
+  if (hasAmount(line) && invalidSlhsAmount(line)) return true;
+  if (nextNonEmpty.trimStart().startsWith("|")) return false;
+  if (
+    !/\b(?:Halal|PIRT|MERP|re-?entry|keluar-masuk|rientro|rentr[ée]e|въезд)\b/i.test(
+      nextNonEmpty,
+    ) &&
+    STALE_SLHS_ON_REQUEST.test(nextNonEmpty)
+  )
+    return true;
+  return (
+    hasAmount(nextNonEmpty) &&
+    !isGovSlhsFact(nextNonEmpty) &&
+    invalidSlhsAmount(nextNonEmpty)
   );
 }
 
@@ -408,6 +442,42 @@ describe("guards are not vacuous (guilt: the retired lines fail)", () => {
     expect(slhsViolation("SLHS", "IDR 9–25 million")).toBe(true);
     expect(slhsViolation("assistance for **IDR 9,000,000**, SLHS")).toBe(true);
     expect(
+      slhsViolation("| SLHS | Hygiene Sanitation Certificate | On request |"),
+    ).toBe(true);
+    expect(
+      slhsViolation(
+        "- Core License: Sertifikat Laik Sehat (SLHS) — Hygiene Certificate",
+      ),
+    ).toBe(true);
+    expect(
+      slhsViolation(
+        "- Core License: Sertifikat Laik Higiene Sanitasi (SLHS)",
+        "- Cost/Time: Price on request — contact Bali Zero; 3–4 weeks processing",
+      ),
+    ).toBe(true);
+    // Pass-through / third-party lab exclusions on a Bali Zero quote must NOT exempt wrong prices or on-request
+    expect(
+      slhsViolation(
+        "Bali Zero provides SLHS certification assistance for **IDR 9,000,000** (third-party lab testing and staff training pass-through), which includes pre-inspection preparation.",
+      ),
+    ).toBe(true);
+    expect(
+      slhsViolation(
+        "Bali Zero provides SLHS certification assistance (**price on request**; third-party lab testing and staff training pass-through).",
+      ),
+    ).toBe(true);
+    expect(
+      slhsViolation(
+        "Bali Zero menyediakan bantuan sertifikasi SLHS seharga **IDR 9.000.000** (uji lab pihak ketiga dan pelatihan staf dibayarkan sesuai biaya riil).",
+      ),
+    ).toBe(true);
+    expect(
+      slhsViolation(
+        "- Core License: Sertifikat Laik Higiene Sanitasi (SLHS) — Hygiene and Sanitation Certificate",
+        "- Cost/Time: IDR 9,000,000 (third-party lab testing and staff training pass-through); 3–4 weeks processing",
+      ),
+    ).toBe(true);
+    expect(
       onRequestViolation(
         "| PIRT (Home Industry Food) | 500,000 - 1,000,000 | 2-4 weeks |",
       ),
@@ -525,10 +595,24 @@ describe("guards are not vacuous (guilt: the retired lines fail)", () => {
       ),
     ).toBe(false);
     expect(
-      slhsViolation("| SLHS | Hygiene Sanitation Certificate |", "On request"),
+      slhsViolation("| SLHS | Hygiene Sanitation Certificate |", "10,000,000"),
     ).toBe(false);
     expect(
-      slhsViolation("| SLHS | Hygiene Sanitation Certificate | On request |"),
+      slhsViolation("| SLHS | Hygiene Sanitation Certificate | 10,000,000 |"),
+    ).toBe(false);
+    expect(
+      slhsViolation("SLHS certification assistance for **10 000 000 IDR**"),
+    ).toBe(false);
+    expect(
+      slhsViolation(
+        "Bali Zero provides SLHS certification assistance for **IDR 10,000,000** (third-party lab testing and staff training pass-through), which includes pre-inspection preparation.",
+      ),
+    ).toBe(false);
+    expect(
+      slhsViolation(
+        "- Core License: Sertifikat Laik Higiene Sanitasi (SLHS) — Hygiene and Sanitation Certificate",
+        "- Cost/Time: IDR 10,000,000 (third-party lab testing and staff training pass-through); 3–4 weeks processing",
+      ),
     ).toBe(false);
     expect(
       alcoholViolation(
@@ -670,7 +754,7 @@ describe("licence prices follow the 2026-10-17 owner ruling", () => {
     expect(hits).toEqual([]);
   });
 
-  it("no article or llms export carries a Bali Zero price for SLHS or PIRT", () => {
+  it("SLHS quotes only 10M (never 9M or stale on-request), and PIRT carries no Bali Zero price", () => {
     const hits = everyUnit
       .filter(
         (u) => onRequestViolation(u.text) || slhsViolation(u.text, u.next),

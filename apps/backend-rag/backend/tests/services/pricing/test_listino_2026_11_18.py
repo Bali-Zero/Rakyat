@@ -34,7 +34,7 @@ _LLMS = _BACKEND.parents[1] / "mouth" / "public" / "llms.txt"
 #: the onshore row's price and verified_on (its other fields stay inside the
 #: digest), and the new row, which is pinned whole by _DISSOLVING_ROW instead.
 _BASE_DIGEST = (
-    "2a8d0f8c782aea9588c84e2e0c1c85e0b39ae54db9fa8a8d1f5ae89b7c7a66fa"  # pragma: allowlist secret
+    "d5b1e84d162ea19dcd4efc23ec525262f3102cd2eaf659c9f7d9d56ee95f2e19"  # pragma: allowlist secret
 )
 
 _DISSOLVING_ROW = {
@@ -69,6 +69,9 @@ def _digest(doc: dict) -> str:
     # test_practice_type_ext_d12.py and test_practice_type_driving_license_back.py.
     doc["services"]["multiple_entry_visas"].pop("D12 Extension", None)
     doc["services"]["other_process"].pop("Driving License", None)
+    # Added on 2026-11-27; pinned whole by test_hospitality_licences_2026_11_27.py.
+    doc["services"]["company_services"].pop("SLS — Villa & Boutique Accommodation", None)
+    doc["services"]["company_services"].pop("SLS — Hotel & Resort", None)
     blob = json.dumps(doc, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
@@ -81,7 +84,7 @@ def test_changed_rows_carry_the_ruled_price_and_attestation() -> None:
     assert dissolving["price"] == "13.000.000 IDR"
     assert onshore["verified_on"] == "2026-11-18"
     assert dissolving["verified_on"] == "2026-11-18"
-    assert doc["metadata"]["last_updated"] == "2026-11-18"
+    assert doc["metadata"]["last_updated"] == "2026-11-27"
 
 
 def test_the_new_row_is_exactly_the_ruled_row() -> None:
