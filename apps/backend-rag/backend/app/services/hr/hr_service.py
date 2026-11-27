@@ -131,8 +131,54 @@ async def _refuse_if_payroll_closed(conn: Any, month: int, year: int) -> None:
         raise BonusPeriodLockedError(msg)
 
 
+ANNUAL_LEAVE_CODE = "annual"
+
+
+async def _carry_annual_remainder(conn: Any, year: int, employee_id: int | None = None) -> None:
+    """Set each annual balance of `year` to carry what the year before left, plus or minus.
+
+    The remainder is allocated + carried_over - used of the year before; a year that ended
+    in debt carries a negative number. Pending days are left out: a pending request moves
+    the remainder only once approved, and approve_leave carries that forward again.
+    """
+    query = """
+        UPDATE hr_leave_balances AS cur
+        SET carried_over = prev.allocated_days + prev.carried_over - prev.used_days
+        FROM hr_leave_balances AS prev, hr_leave_types AS lt
+        WHERE cur.balance_year = $1::int
+          AND prev.balance_year = $1::int - 1
+          AND prev.employee_id = cur.employee_id
+          AND prev.leave_type_id = cur.leave_type_id
+          AND lt.id = cur.leave_type_id
+          AND lt.code = $2
+          AND cur.carried_over
+              <> prev.allocated_days + prev.carried_over - prev.used_days
+    """
+    params: list[Any] = [year, ANNUAL_LEAVE_CODE]
+    if employee_id is not None:
+        query += " AND cur.employee_id = $3::int"
+        params.append(employee_id)
+    await conn.execute(query, *params)
+
+
+async def _carry_forward(conn: Any, employee_id: int, from_year: int) -> None:
+    """Re-carry every later year already opened for one employee, oldest first."""
+    last_year = await conn.fetchval(
+        "SELECT MAX(balance_year) FROM hr_leave_balances WHERE employee_id = $1",
+        employee_id,
+    )
+    if last_year is None:
+        return
+    for year in range(from_year + 1, int(last_year) + 1):
+        await _carry_annual_remainder(conn, year, employee_id)
+
+
 async def _open_year_balances(conn: Any, year: int, employee_id: int | None = None) -> None:
-    """Open a year's balances from the prior year's tracked leave types."""
+    """Open a year's balances from the prior year's tracked leave types.
+
+    Annual leave carries the signed remainder of the year before; every other type carries 0.
+    A year opened earlier (a December request for January leave) is re-carried here too.
+    """
     query = """
         INSERT INTO hr_leave_balances
             (employee_id, leave_type_id, balance_year, allocated_days,
@@ -149,6 +195,7 @@ async def _open_year_balances(conn: Any, year: int, employee_id: int | None = No
         ON CONFLICT (employee_id, leave_type_id, balance_year) DO NOTHING
     """
     await conn.execute(query, *params)
+    await _carry_annual_remainder(conn, year, employee_id)
 
 
 def department_of(email: str | None, stored: str | None = None) -> str:
@@ -1361,7 +1408,7 @@ class HRService:
                 # against clients bypassing the dropdown filter).
                 leave_type = await conn.fetchrow(
                     """
-                    SELECT id FROM hr_leave_types
+                    SELECT id, code FROM hr_leave_types
                     WHERE id = $1 AND is_active = TRUE
                 """,
                     data["leave_type_id"],
@@ -1386,13 +1433,16 @@ class HRService:
                 )
 
                 if balance:
+                    # Annual leave may go below zero: leave taken ahead of the allowance is
+                    # a debt the next year opens with, and approval is the control. Every
+                    # other tracked type keeps its allowance as a limit.
                     available = (
                         balance["allocated_days"]
                         + balance["carried_over"]
                         - balance["used_days"]
                         - balance["pending_days"]
                     )
-                    if data["total_days"] > available:
+                    if leave_type["code"] != ANNUAL_LEAVE_CODE and data["total_days"] > available:
                         msg = f"Insufficient leave balance: {available} days available, {data['total_days']} requested"
                         raise ValueError(msg)
 
@@ -1460,6 +1510,8 @@ class HRService:
                     req["leave_type_id"],
                     req["start_date"].year,
                 )
+                # Days used in a year change what it leaves to the years already opened after it.
+                await _carry_forward(conn, req["employee_id"], req["start_date"].year)
 
                 logger.info("Leave request %s approved", request_id)
                 return dict(req)
