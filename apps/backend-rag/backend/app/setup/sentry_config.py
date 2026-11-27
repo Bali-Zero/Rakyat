@@ -34,7 +34,7 @@ import os
 import re
 import threading
 from typing import Any
-from urllib.parse import unquote_plus, urlsplit, urlunsplit
+from urllib.parse import unquote, unquote_plus, urlsplit, urlunsplit
 
 from backend.core.secret_log_redaction import redact_url_secrets
 
@@ -467,7 +467,7 @@ def _is_pii_key(key: Any) -> bool:
     return any(s in k for s in _PII_KEY_SUBSTRINGS)
 
 
-def _redact_string(s: str) -> str:
+def _redact_plain_text(s: str) -> str:
     """Mask identifiers in free text: emails, client_id, phones, NPWP, labelled IDs.
 
     See the free-text block above for the two tiers and for what this still
@@ -485,6 +485,43 @@ def _redact_string(s: str) -> str:
     # The label is what makes the breadcrumb still worth reading.
     s = _LABELLED_ID_RE.sub(lambda m: f"{m.group(1)} {PII_REDACTION_PLACEHOLDER}", s)
     return s
+
+
+# Match request paths both alone (Uvicorn) and embedded in an absolute URL or message.
+_URL_PATH = re.compile(r"""/[^\s"'<>]*""")
+_URL_DELIMITERS = re.compile(r"([/?&#])")
+
+
+def _redact_url_path(match: re.Match[str]) -> str:
+    target = match.group()
+    if "%" not in target and "+" not in target:
+        return target
+    parts = _URL_DELIMITERS.split(target)
+    query = False
+    for i, part in enumerate(parts):
+        if part == "?":
+            query = True
+        elif part == "#":
+            query = False
+        elif "%" in part or (query and "+" in part):
+            key, eq, value = part.partition("=") if query and "=" in part else ("", "", part)
+            decode = unquote_plus if query else unquote
+            label = decode(key)
+            if eq and _redact_plain_text(label) != label:
+                key = label = PII_REDACTION_PLACEHOLDER
+            # Include the label for identifiers recognized only in context, e.g. passport.
+            view = label + eq + decode(value)
+            if _redact_plain_text(view) != view:
+                value = PII_REDACTION_PLACEHOLDER
+            parts[i] = key + eq + value
+    return "".join(parts)
+
+
+def _redact_string(text: str) -> str:
+    # Decode only for inspection. Retain the original spelling of unrelated URL fields.
+    if "/" in text and ("%" in text or "+" in text):
+        text = _URL_PATH.sub(_redact_url_path, text)
+    return _redact_plain_text(text)
 
 
 def _redact_query_string(s: str) -> str:
