@@ -498,9 +498,17 @@ async def test_an_approval_and_the_first_opening_of_next_year_do_not_cross(
         await _wait_briefly(january_done)
 
     approver = HRService(_HoldingPool(pool, "SELECT MAX(balance_year)", hold_the_approval))
+    reached_the_year_lookup = True
 
     async def ask_for_january() -> None:
-        await approval_held.wait()
+        nonlocal reached_the_year_lookup
+        try:
+            await asyncio.wait_for(approval_held.wait(), 5.0)
+        except asyncio.TimeoutError:
+            # A service that never looks up the later years opened never pauses here.
+            reached_the_year_lookup = False
+            january_done.set()
+            return
         try:
             await service.request_leave(
                 {
@@ -516,5 +524,6 @@ async def test_an_approval_and_the_first_opening_of_next_year_do_not_cross(
 
     await asyncio.gather(approver.approve_leave(december["id"], reviewer), ask_for_january())
 
+    assert reached_the_year_lookup, "the approval never reached the year lookup"
     assert (await _row(pool, employee_id, annual_id, 2026))["used_days"] == 7
     assert (await _row(pool, employee_id, annual_id, 2027))["carried_over"] == 5
