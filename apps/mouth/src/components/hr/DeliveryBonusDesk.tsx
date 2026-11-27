@@ -75,6 +75,7 @@ type Desk = {
     service: string;
     amount_idr: number | null;
     already_earned: boolean;
+    forfeits?: boolean;
   } | null;
 };
 type BoundDesk = {
@@ -106,6 +107,8 @@ const statusNames: Record<string, string> = {
   paid: "Paid",
   awaiting_rate: "Rate to confirm",
   payroll_locked: "Payroll review",
+  forfeited: "No bonus · paid below price",
+  no_bonus: "No bonus for this service",
   reversed: "Reversed",
   rejected: "Rejected",
 };
@@ -595,7 +598,11 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
                   ? "Bonus milestone already recorded"
                   : next.amount_idr === null
                     ? "Bonus rate to confirm"
-                    : `Potential bonus · ${money(next.amount_idr)}`}
+                    : next.forfeits
+                      ? "No bonus · the client paid less than the price"
+                      : next.amount_idr === 0
+                        ? "No bonus for this service"
+                        : `Potential bonus · ${money(next.amount_idr)}`}
               </p>
             </div>
           </section>

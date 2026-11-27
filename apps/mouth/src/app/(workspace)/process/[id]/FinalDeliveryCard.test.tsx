@@ -104,7 +104,7 @@ describe("Final delivery", () => {
     expect(screen.queryByRole("button", { name: /retry/i })).toBeNull();
   });
 
-  it("guides a VOA extension from the named missing permit to a saved document and completion", async () => {
+  it("completes a VOA extension on its first proof upload and shows a forfeited bonus", async () => {
     const permit = slot("document_1", "Renewed ITK — Visit Stay Permit");
     const pack = { ...initial, bonus_slot: null, slots: [permit] };
     requests.get.mockResolvedValue(pack);
@@ -117,11 +117,14 @@ describe("Final delivery", () => {
     );
     const { user, complete } = setup();
     expect(await screen.findByText("Renewed ITK")).toBeVisible();
-    const button = screen.getByRole("button", {
-      name: "Complete practice",
-    });
-    expect(button).toBeDisabled();
-    expect(screen.getByText("1 document remaining")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Complete practice" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText(
+        "The first final document you upload completes the practice.",
+      ),
+    ).toBeVisible();
     expect(screen.getByText("PDF, JPG, PNG, DOCX · Max 3 MB")).toBeVisible();
     expect(requests.companies).not.toHaveBeenCalled();
     await user.upload(
@@ -129,24 +132,28 @@ describe("Final delivery", () => {
       new File(["permit"], "renewed-itk.pdf", { type: "application/pdf" }),
     );
     expect(await screen.findByText("Saving…")).toBeVisible();
-    expect(button).toBeDisabled();
-    const ready = {
+    finishUpload({
       ...pack,
+      status: "completed",
+      proof_ready: true,
+      bonus_status: "forfeited",
       slots: [{ ...permit, document_id: 73, file_name: "renewed-itk.pdf" }],
-    };
-    finishUpload(ready);
+    });
     expect(await screen.findByText("renewed-itk.pdf")).toBeVisible();
-    expect(await screen.findByText("Ready to complete")).toBeVisible();
-    expect(button).toBeEnabled();
+    expect(
+      await screen.findByText("Document saved. Practice completed."),
+    ).toBeVisible();
+    expect(
+      screen.getByText(
+        "No bonus: the client paid less than the service price.",
+      ),
+    ).toBeVisible();
+    await waitFor(() => expect(complete).toHaveBeenCalledOnce());
     expect(requests.post).toHaveBeenCalledTimes(1);
     expect(requests.post).toHaveBeenCalledWith(
       base + "/slots/document_1",
       expect.objectContaining({ file_name: "renewed-itk.pdf" }),
     );
-    requests.post.mockResolvedValueOnce({ ...ready, status: "completed" });
-    await user.click(button);
-    await waitFor(() => expect(complete).toHaveBeenCalledOnce());
-    expect(requests.post).toHaveBeenLastCalledWith(base + "/complete");
   });
 
   it("keeps company filing optional and explains the upload blocker when company mode is selected", async () => {
@@ -477,11 +484,12 @@ describe("Final delivery", () => {
     can_postpone: true,
     can_escalate: false,
   };
-  it("restores only a server-authorised missing permit on a completed practice", async () => {
+  it("adds a later document to a completed practice only where the server allows it", async () => {
     const closed = {
       ...initial,
       status: "completed",
       bonus_event: "electronic_visa_issued",
+      bonus_rate: 0,
       slots: [
         slot("electronic_visa", "Electronic Visa", { document_id: 71 }),
         slot("itk", "ITK", { can_repair: true }),
@@ -493,7 +501,8 @@ describe("Final delivery", () => {
       slots: [closed.slots[0], slot("itk", "ITK", { document_id: 72 })],
     });
     const { user, complete } = setup();
-    const input = await screen.findByLabelText("Restore ITK");
+    const input = await screen.findByLabelText("Upload ITK");
+    expect(screen.getByText("This service carries no bonus.")).toBeVisible();
     expect(
       screen.queryByRole("button", { name: "Complete practice" }),
     ).toBeNull();
@@ -508,7 +517,7 @@ describe("Final delivery", () => {
         expect.objectContaining({ file_name: "ITK.pdf" }),
       ),
     );
-    expect(await screen.findByText("Missing permit restored.")).toBeVisible();
+    expect(await screen.findByText("Document saved.")).toBeVisible();
     expect(complete).not.toHaveBeenCalled();
   });
 

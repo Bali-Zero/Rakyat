@@ -334,6 +334,46 @@ describe("DeliveryBonusDesk", () => {
     expect(screen.getByText("Synthetic filing")).not.toBeVisible();
     expect(mocks.request).toHaveBeenCalledTimes(1);
   });
+  it("names a forfeited and a no-bonus delivery and a next case that will forfeit", async () => {
+    const sample = desk();
+    const forfeited = {
+      ...sample.recent[0],
+      practice_id: 49,
+      service: "Extension B1 - VOA",
+      amount_idr: null,
+      status: "forfeited",
+    };
+    const custom = {
+      ...sample.recent[0],
+      practice_id: 51,
+      service: "Custom",
+      amount_idr: 0,
+      status: "no_bonus",
+    };
+    mocks.request.mockResolvedValue({
+      sentSub: "employee-a",
+      data: {
+        ...sample,
+        recent: [forfeited, custom],
+        next_case: {
+          practice_id: 50,
+          service: "Extension B1 - VOA",
+          amount_idr: 15000,
+          already_earned: false,
+          forfeits: true,
+        },
+      },
+    });
+    render(<DeliveryBonusDesk />);
+    expect(
+      await screen.findByText("No bonus · paid below price"),
+    ).toBeVisible();
+    expect(
+      screen.getByText("No bonus · the client paid less than the price"),
+    ).toBeVisible();
+    fireEvent.click(screen.getByText("View 1 earlier delivery"));
+    expect(screen.getByText("No bonus for this service")).toBeVisible();
+  });
   it("handles zero delivery activity and a goal save failure without fabricating earnings", async () => {
     const data = {
       ...desk(),

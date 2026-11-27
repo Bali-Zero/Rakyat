@@ -79,6 +79,26 @@ async def test_invoice_below_price_forfeits_and_never_reaches_payroll_or_review(
 
 
 @pytest.mark.asyncio
+async def test_a_zero_rate_is_no_bonus_and_never_reaches_payroll_or_review(db):  # noqa: F811
+    await db.execute("UPDATE hr_bonus_rates SET amount_idr=0 WHERE practice_type_code='ext_b1_voa'")
+    pid = await _practice(db, invoices=(1000000,))
+    result = await _earn(db, pid)
+    assert result["status"] == "no_bonus" and result["amount_idr"] == 0
+    assert await _ledger(db, pid) == 0
+    assert (await get_delivery_bonus(db, pid))["status"] == "no_bonus"
+    # HR resolving the receipt at its recorded rate books nothing either.
+    assert (await resolve_delivery_bonus(db, pid, 0, "hr-reviewer"))["status"] == "no_bonus"
+    assert await _ledger(db, pid) == 0
+    pool = MagicMock()
+    pool.acquire.return_value.__aenter__.return_value = db
+    reviews = await delivery_bonus_reviews({"role": "admin", "user_id": "reviewer"}, pool)
+    assert pid not in [i["practice_id"] for i in reviews["items"]]
+    desk = await delivery_desk(db, "tm-1")
+    assert desk["recent"][0]["status"] == "no_bonus"
+    assert desk["totals"]["awaiting_rate"] == 0 and desk["totals"]["payroll_locked"] == 0
+
+
+@pytest.mark.asyncio
 async def test_invoice_at_price_pays_and_multi_person_invoice_above_price_pays(db):  # noqa: F811
     exact = await _earn(db, await _practice(db, invoices=(850000,)))
     assert exact["amount_idr"] == 15000 and exact["status"] == "pending"

@@ -41,7 +41,9 @@ OPERATORS = {
     "tax responsible",
 }
 _LIVE = f"{admin_document_not_deleted_clause('d')} AND NOT COALESCE(d.is_archived, FALSE)"
-_PERMIT_TYPES = {"itk", "itas", "imk", "itap"}
+# Zero 2026-11-27: a November practice completed before Final delivery earns when its proof
+# is uploaded. Older months were settled by the status-change rule and earn nothing now.
+LATE_PROOF_FROM = date(2026, 11, 1)
 _SCOPED = """d.practice_id = p.id AND d.client_id = p.client_id
              AND d.family_member_id IS NOT DISTINCT FROM p.family_member_id"""
 
@@ -131,14 +133,9 @@ async def state(conn: Any, p: dict, user: dict | None = None) -> dict:
         p["code"],
     )
     for slot in resolved:
-        # A practice completed before Final delivery existed (2026-11-24) has no
-        # completion record, yet its issued permit must still reach the case.
-        slot["can_repair"] = bool(
-            completed
-            and not slot["document_id"]
-            and not slot["waiver_reason"]
-            and document_type(slot["key"], slot["label"]) in _PERMIT_TYPES
-        )
+        # The first proof completes the practice; the other documents, and a corrected
+        # file, still reach the completed case.
+        slot["can_repair"] = bool(completed and not slot["waiver_reason"])
         if (
             slot["key"] == policy["bonus_slot"]
             and slot["issued_on"] is None
@@ -157,7 +154,7 @@ async def state(conn: Any, p: dict, user: dict | None = None) -> dict:
             ),
             None,
         )
-    return {
+    view = {
         "status": p["status"],
         "delivery_recorded": bool(delivered),
         "needs_titles": bool(needs_titles),
@@ -169,7 +166,23 @@ async def state(conn: Any, p: dict, user: dict | None = None) -> dict:
         ),
         "bonus_event": bonus["event_kind"] if bonus else None,
         "bonus_status": bonus.get("status") if bonus else None,
+        "bonus_rate": await conn.fetchval(
+            """SELECT amount_idr FROM hr_bonus_rates WHERE practice_type_code=$1 AND is_active
+               AND effective_from<=$2 AND (effective_to IS NULL OR effective_to>=$2)""",
+            p["code"],
+            business_today(),
+        ),
     }
+    view["proof_ready"] = proof_kind(view) is not None
+    return view
+
+
+def proof_kind(view: dict) -> str | None:
+    """The bonus event the saved documents prove: the bonus slot, else any final document."""
+    bonus = next((s for s in view["slots"] if s["key"] == view["bonus_slot"]), None)
+    if bonus and not bonus["waiver_reason"]:
+        return view["bonus_trigger"] if bonus["document_id"] else None
+    return "service_delivered" if any(s["document_id"] for s in view["slots"]) else None
 
 
 def slot_for(view: dict, key: str) -> dict:
@@ -366,7 +379,9 @@ def combined_permit(first: dict, second: dict) -> bool:
     return types in ({"imk", "itas"}, {"imk", "itap"})
 
 
-async def reuse(pool: Any, practice_id: int, key: str, user: dict, document_id: int) -> dict:
+async def reuse(
+    pool: Any, practice_id: int, key: str, user: dict, document_id: int, tasks: BackgroundTasks
+) -> dict:
     async with pool.acquire() as conn, conn.transaction():
         p = await practice(conn, practice_id, user, lock=True)
         repair = p["status"] == "completed"
@@ -374,8 +389,6 @@ async def reuse(pool: Any, practice_id: int, key: str, user: dict, document_id: 
             require_open(p)
         view = await state(conn, p, user)
         slot = slot_for(view, key)
-        if repair and document_type(key, slot["label"]) not in _PERMIT_TYPES:
-            raise HTTPException(409, "Only a permit can be added to a completed practice")
         if slot["document_id"] == document_id:
             return await state(conn, p, user)
         if (repair and not slot["can_repair"]) or slot["reusable_document_id"] != document_id:
@@ -409,13 +422,12 @@ async def reuse(pool: Any, practice_id: int, key: str, user: dict, document_id: 
             document_id,
             user["email"],
         )
-        if repair:
-            await publish(conn, p, [key])
-        else:
-            await apply_document_milestone(conn, p, view, key)
+        completed = await accept(conn, p, key, user)
         await retire_replaced_file(conn, p, previous)
         await audit(conn, practice_id, user["email"], f"Combined permit confirmed for slot: {key}")
-        updated = await state(conn, p, user)
+        updated = await state(conn, {**p, "status": "completed"} if completed else p, user)
+    if completed:
+        notify_completed(pool, p, user, tasks)
     await invalidate_delivery_cache(p)
     return updated
 
@@ -571,17 +583,12 @@ async def upload(
         initial_view = await state(conn, snapshot, user)
         initial_slot = slot_for(initial_view, key)
         if repair:
-            if (
-                snapshot["status"] != "completed"
-                or initial_slot["waiver_reason"]
-                or document_type(key, initial_slot["label"]) not in _PERMIT_TYPES
-            ):
+            if snapshot["status"] != "completed" or initial_slot["waiver_reason"]:
                 raise HTTPException(
                     409,
-                    "Only a missing final permit on a completed practice can be repaired",
+                    "Only a required document of a completed practice can be added",
                 )
-            previous = await previous_slot(conn, snapshot, key)
-            original_company = previous["company_id"] if previous else None
+            original_company = await case_company(conn, snapshot, key)
             if request.company_id is not None and request.company_id != original_company:
                 raise HTTPException(409, "A repair cannot change the permit's company")
             request = request.model_copy(update={"company_id": original_company})
@@ -607,7 +614,8 @@ async def upload(
     await stage(pool, snapshot, initial_slot, user, request, marker, tasks, repair=repair)
     async with pool.acquire() as conn, conn.transaction():
         p = await practice(conn, practice_id, user, lock=True)
-        if not repair:
+        # A retried first proof may arrive after its twin completed the practice.
+        if not repair and p["status"] != "completed":
             require_open(p)
         view = await state(conn, p, user)
         slot = slot_for(view, key)
@@ -645,6 +653,8 @@ async def upload(
         # even if the separate combined-permit action also referenced it.
         if row["document_id"] == slot["document_id"]:
             return view
+        if not repair:
+            require_open(p)
         if any(
             other["key"] != key and other["document_id"] == row["document_id"]
             for other in view["slots"]
@@ -655,7 +665,7 @@ async def upload(
         ]:
             raise HTTPException(409, "Another operator changed this slot. Refresh and review.")
         previous = await previous_slot(conn, p, key)
-        if repair and ((previous and previous.get("company_id")) or None) != request.company_id:
+        if repair and await case_company(conn, p, key) != request.company_id:
             raise HTTPException(409, "Permit destination changed. Refresh and review.")
         await conn.execute(
             """INSERT INTO practice_delivery_slots(practice_id,service_code,slot_key,document_id,
@@ -673,34 +683,71 @@ async def upload(
             user["email"],
             issued_on,
         )
-        if repair:
-            await publish(conn, p, [key])
-        else:
-            await apply_document_milestone(conn, p, view, key, issued_on=issued_on)
+        completed = await accept(conn, p, key, user, issued_on=issued_on)
         await retire_replaced_file(conn, p, previous)
-        description = "Missing final permit repaired" if repair else "Final document uploaded"
+        description = (
+            "Final document added after completion" if repair else "Final document uploaded"
+        )
         await audit(conn, practice_id, user["email"], f"{description}: {key}")
-        updated = await state(conn, p, user)
+        updated = await state(conn, {**p, "status": "completed"} if completed else p, user)
+    if completed:
+        notify_completed(pool, p, user, tasks)
     await invalidate_delivery_cache(p)
     return updated
 
 
-async def apply_document_milestone(
-    conn: Any, practice_row: dict, view: dict, key: str, *, issued_on: date | None = None
-) -> None:
-    """Apply the validated attachment, including a confirmed combined permit, under the practice lock."""
-    if view["bonus_slot"] == key:
-        await publish(conn, practice_row, [key])
-        await record_delivery_bonus(
-            conn,
-            practice_row["id"],
-            practice_row["code"],
-            practice_row["assigned_to"],
-            view["bonus_trigger"],
-            issued_on=issued_on,
+async def case_company(conn: Any, p: dict, key: str) -> int | None:
+    """A file keeps its slot's company; a first file joins the company the case already names."""
+    previous = await previous_slot(conn, p, key)
+    if previous and previous["document_id"]:
+        return previous["company_id"]
+    return await conn.fetchval(
+        """SELECT company_id FROM practice_delivery_slots WHERE practice_id=$1 AND service_code=$2
+           AND company_id IS NOT NULL ORDER BY slot_key LIMIT 1""",
+        p["id"],
+        p["code"],
+    )
+
+
+async def accept(
+    conn: Any, p: dict, key: str, user: dict, *, issued_on: date | None = None
+) -> bool:
+    """Apply a saved final document under the practice lock. True when it completed the practice.
+
+    The first proof completes an open practice and earns its bonus at upload time. A completed
+    practice publishes each later file; one completed before Final delivery earns on its proof
+    only from LATE_PROOF_FROM.
+    """
+    view = await state(conn, p, user)
+    kind = proof_kind(view)
+    open_case = p["status"] != "completed"
+    earns = kind is not None and (
+        open_case
+        or bool(
+            await conn.fetchval(
+                "SELECT (completion_date AT TIME ZONE 'Asia/Makassar')::date >= $2 FROM practices WHERE id=$1",
+                p["id"],
+                LATE_PROOF_FROM,
+            )
         )
-    if view["bonus_trigger"] == "electronic_visa_issued":
-        await record_visa_milestone(conn, practice_row, key)
+    )
+    if key == view["bonus_slot"] or not open_case:
+        await publish(conn, p, [key])
+    if earns and kind != "service_delivered" and key == view["bonus_slot"]:
+        await record_delivery_bonus(
+            conn, p["id"], p["code"], p["assigned_to"], kind, issued_on=issued_on
+        )
+    elif earns and kind == "service_delivered" and not open_case:
+        await record_delivery_bonus(conn, p["id"], p["code"], p["assigned_to"], kind)
+    # The permit clock starts only from a recorded issuance receipt.
+    if view["bonus_trigger"] == "electronic_visa_issued" and (
+        key != "electronic_visa" or await get_delivery_bonus(conn, p["id"])
+    ):
+        await record_visa_milestone(conn, p, key)
+    if open_case and kind:
+        await finish(conn, p, view, user)
+        return True
+    return False
 
 
 async def publish(conn: Any, p: dict, keys: list[str]) -> None:
@@ -747,10 +794,11 @@ async def complete(pool: Any, practice_id: int, user: dict, tasks: BackgroundTas
         if p["status"] == "completed" and prior_service is not None:
             return view
         require_open(p)
-        if not view["slots"] or any(
-            not (s["document_id"] or s["waiver_reason"]) for s in view["slots"]
+        if proof_kind(view) is None and (
+            not view["slots"]
+            or any(not (s["document_id"] or s["waiver_reason"]) for s in view["slots"])
         ):
-            raise HTTPException(409, "Upload every required final document first")
+            raise HTTPException(409, "Upload the first final document first")
         if await conn.fetchval(
             """SELECT 1 FROM practice_delivery_slots s WHERE s.practice_id=$1 AND s.company_id IS NOT NULL
                AND NOT EXISTS (SELECT 1 FROM client_company_links l WHERE l.client_id=$2
@@ -759,38 +807,44 @@ async def complete(pool: Any, practice_id: int, user: dict, tasks: BackgroundTas
             p["client_id"],
         ):
             raise HTTPException(409, "The practice company is no longer linked to this client")
-        await publish(conn, p, [s["key"] for s in view["slots"] if s["document_id"]])
-        if prior_service is None:
-            await conn.execute(
-                """INSERT INTO practice_delivery_completions(practice_id,service_code,delivered_by)
-                   VALUES($1,$2,$3)""",
-                practice_id,
-                p["code"],
-                user["email"],
-            )
-        await conn.execute(
-            """UPDATE practices SET status='completed',completion_date=COALESCE(completion_date,now()),
-               updated_at=CASE WHEN EXTRACT(DAY FROM now() AT TIME ZONE 'Asia/Makassar')>28
-                 THEN (date_trunc('month', now() AT TIME ZONE 'Asia/Makassar') + interval '1 month') AT TIME ZONE 'Asia/Makassar'
-                 ELSE now() END WHERE id=$1""",
-            practice_id,
-        )
-        if not view["bonus_slot"] or slot_for(view, view["bonus_slot"])["waiver_reason"]:
-            await record_delivery_bonus(
-                conn, practice_id, p["code"], p["assigned_to"], "service_delivered"
-            )
-        await audit(
-            conn, practice_id, user["email"], "Final documents delivered and practice completed"
-        )
-        if p["client_visible"] is not False:
-            await conn.execute(
-                """INSERT INTO timeline_events(client_id,practice_id,event_type,title,description,event_date,client_visible,color,created_by)
-                   VALUES($1,$2,'completion','Case completed','Final documents delivered',now(),true,'success',$3)""",
-                p["client_id"],
-                practice_id,
-                user["email"],
-            )
+        await finish(conn, p, view, user)
         updated = await state(conn, {**p, "status": "completed"}, user)
+    notify_completed(pool, p, user, tasks)
+    await invalidate_delivery_cache(p)
+    return updated
+
+
+async def finish(conn: Any, p: dict, view: dict, user: dict) -> None:
+    """Complete an open practice under its lock: publish its files and record the delivery."""
+    await publish(conn, p, [s["key"] for s in view["slots"] if s["document_id"]])
+    await conn.execute(
+        """INSERT INTO practice_delivery_completions(practice_id,service_code,delivered_by)
+           VALUES($1,$2,$3) ON CONFLICT (practice_id) DO NOTHING""",
+        p["id"],
+        p["code"],
+        user["email"],
+    )
+    await conn.execute(
+        """UPDATE practices SET status='completed',completion_date=COALESCE(completion_date,now()),
+           updated_at=CASE WHEN EXTRACT(DAY FROM now() AT TIME ZONE 'Asia/Makassar')>28
+             THEN (date_trunc('month', now() AT TIME ZONE 'Asia/Makassar') + interval '1 month') AT TIME ZONE 'Asia/Makassar'
+             ELSE now() END WHERE id=$1""",
+        p["id"],
+    )
+    if not view["bonus_slot"] or slot_for(view, view["bonus_slot"])["waiver_reason"]:
+        await record_delivery_bonus(conn, p["id"], p["code"], p["assigned_to"], "service_delivered")
+    await audit(conn, p["id"], user["email"], "Final documents delivered and practice completed")
+    if p["client_visible"] is not False:
+        await conn.execute(
+            """INSERT INTO timeline_events(client_id,practice_id,event_type,title,description,event_date,client_visible,color,created_by)
+               VALUES($1,$2,'completion','Case completed','Final documents delivered',now(),true,'success',$3)""",
+            p["client_id"],
+            p["id"],
+            user["email"],
+        )
+
+
+def notify_completed(pool: Any, p: dict, user: dict, tasks: BackgroundTasks) -> None:
     from backend.services.crm.completed_process_service import CompletedProcessService
     from backend.services.portal.portal_notification_service import PortalNotificationService
 
@@ -798,18 +852,16 @@ async def complete(pool: Any, practice_id: int, user: dict, tasks: BackgroundTas
         tasks.add_task(
             PortalNotificationService(pool).notify_practice_status_changed,
             client_id=p["client_id"],
-            practice_id=practice_id,
+            practice_id=p["id"],
             practice_type=p["name"],
             new_status="completed",
             sent_by=user["email"],
         )
         tasks.add_task(
             CompletedProcessService(pool).trigger_on_completed,
-            practice_id=practice_id,
+            practice_id=p["id"],
             triggered_by=user["email"],
         )
-    await invalidate_delivery_cache(p)
-    return updated
 
 
 async def invalidate_delivery_cache(p: dict) -> None:

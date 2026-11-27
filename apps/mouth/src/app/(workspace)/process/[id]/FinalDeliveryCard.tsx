@@ -36,6 +36,8 @@ interface Delivery {
   status: string;
   bonus_slot: string | null;
   bonus_status?: string | null;
+  bonus_rate?: number | null;
+  proof_ready?: boolean;
   bonus_event:
     | "electronic_visa_issued"
     | "kitas_imk_uploaded"
@@ -131,7 +133,7 @@ function StaffDeliveryCard({
     writable &&
     !data.needs_titles &&
     data.slots.length > 0 &&
-    missingSlots.length === 0;
+    (data.proof_ready === true || missingSlots.length === 0);
   const canUpload =
     !writable ||
     !chooseCompany ||
@@ -158,7 +160,11 @@ function StaffDeliveryCard({
     try {
       const result = await request();
       await mutate(result, { revalidate: false });
-      setFeedback(message);
+      setFeedback(
+        writable && result.status === "completed" && !/completed/i.test(message)
+          ? `${message} Practice completed.`
+          : message,
+      );
       window.dispatchEvent(new Event("kita:delivery-changed"));
       setWaiveKey("");
       setWaiver("");
@@ -225,7 +231,7 @@ function StaffDeliveryCard({
           },
         ),
       repairable(slot)
-        ? "Missing permit restored."
+        ? "Document saved."
         : slot.key === data?.bonus_slot
           ? `${visaDateSlot ? "Electronic Visa" : "Renewed IMK"} upload recorded.`
           : "Document saved.",
@@ -325,11 +331,7 @@ function StaffDeliveryCard({
                   working ||
                   !canUpload ||
                   (needsIssueDate(slot) && !validIssueDate);
-                const action = repairable(slot)
-                  ? "Restore"
-                  : saved
-                    ? "Replace"
-                    : "Upload";
+                const action = saved ? "Replace" : "Upload";
                 const timing = slot.label.split(" · ").slice(1).join(" · ");
                 return (
                   <li
@@ -417,7 +419,7 @@ function StaffDeliveryCard({
                           </time>
                         </p>
                       )}
-                      {writable && needsIssueDate(slot) && (
+                      {editable && needsIssueDate(slot) && (
                         <div className={styles.issueDate}>
                           <label htmlFor={`${controlId}-issue-date`}>
                             Electronic Visa issue date
@@ -533,6 +535,14 @@ function StaffDeliveryCard({
               })}
             </ul>
           )}
+          {(data.bonus_rate === 0 || data.bonus_status === "no_bonus") && (
+            <p className={styles.hint}>This service carries no bonus.</p>
+          )}
+          {data.bonus_status === "forfeited" && (
+            <p className={styles.hint}>
+              No bonus: the client paid less than the service price.
+            </p>
+          )}
           {writable && !practice.family_member_id && (
             <details className={styles.company}>
               <summary>
@@ -585,8 +595,8 @@ function StaffDeliveryCard({
                     ? "Ready to complete"
                     : data.needs_titles
                       ? "Name the required documents first."
-                      : missingSlots.length
-                        ? `${missingSlots.length} document${missingSlots.length === 1 ? "" : "s"} remaining`
+                      : data.slots.length
+                        ? "The first final document you upload completes the practice."
                         : "Define the required documents first."}
               </p>
               <button

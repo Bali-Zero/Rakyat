@@ -106,16 +106,32 @@ async def test_only_authorised_delivery_operators(db, user):
         await service.practice(db[1], 7, user)
 
 
+def evisa_row(document_id=9):
+    return {
+        "slot_key": "electronic_visa",
+        "waiver_reason": None,
+        "document_id": document_id,
+        "file_name": "issued.pdf",
+    }
+
+
 @pytest.mark.asyncio
-async def test_issuance_earns_bonus_while_post_entry_task_remains_open(db, writes, monkeypatch):
+async def test_issuance_completes_the_practice_and_earns_bonus_while_itk_remains_open(
+    db, writes, monkeypatch
+):
     pool, conn = db
     monkeypatch.setattr(
         service,
         "staged_file",
         AsyncMock(return_value={"document_id": 9, "company_document_id": None}),
     )
+    # Two reads before the write (snapshot, locked), two after it (accept, returned view).
+    conn.fetch.side_effect = [[], [], [evisa_row()], [evisa_row()]]
+    receipt = {"event_kind": "electronic_visa_issued", "status": "pending"}
+    writes["get_delivery_bonus"].side_effect = [None, None, None, receipt, receipt]
+    tasks = BackgroundTasks()
     result = await service.upload(
-        pool, 7, "electronic_visa", STAFF, request(date(2026, 1, 15)), BackgroundTasks()
+        pool, 7, "electronic_visa", STAFF, request(date(2026, 1, 15)), tasks
     )
     writes["record_delivery_bonus"].assert_awaited_once_with(
         conn,
@@ -125,11 +141,18 @@ async def test_issuance_earns_bonus_while_post_entry_task_remains_open(db, write
         "electronic_visa_issued",
         issued_on=date(2026, 1, 15),
     )
-    writes["publish"].assert_awaited_once_with(conn, PRACTICE, ["electronic_visa"])
-    assert result["status"] == "on_process"
+    # The bonus slot and then every filled slot are published as the case completes.
+    assert [c.args[-1] for c in writes["publish"].await_args_list] == [
+        ["electronic_visa"],
+        ["electronic_visa"],
+    ]
+    assert result["status"] == "completed"
     writes["record_visa_milestone"].assert_awaited_once_with(conn, PRACTICE, "electronic_visa")
     assert result["slots"][1]["document_id"] is None
-    assert not any("UPDATE practices" in call.args[0] for call in conn.execute.await_args_list)
+    executed = [call.args[0] for call in conn.execute.await_args_list]
+    assert any("INSERT INTO practice_delivery_completions" in sql for sql in executed)
+    assert sum("UPDATE practices" in sql for sql in executed) == 1
+    assert len(tasks.tasks) == 2
 
 
 @pytest.mark.asyncio
@@ -165,19 +188,15 @@ async def test_invalid_or_concurrent_destination_is_rechecked_after_storage(db, 
 
 
 @pytest.mark.asyncio
-async def test_visa_waits_for_itk_and_cannot_waive_it(db, writes):
+async def test_visa_needs_a_first_proof_to_complete_and_itk_cannot_be_waived(db, writes):
     pool, conn = db
-    conn.fetch.return_value = [
-        {
-            "slot_key": "electronic_visa",
-            "document_id": 9,
-            "file_name": "issued.pdf",
-            "waiver_reason": None,
-        }
-    ]
-    with pytest.raises(HTTPException) as incomplete:
+    with pytest.raises(HTTPException, match="Upload the first final document first") as empty:
         await service.complete(pool, 7, STAFF, BackgroundTasks())
-    assert incomplete.value.status_code == 409
+    assert empty.value.status_code == 409
+    conn.fetch.return_value = [evisa_row()]
+    # The e-visa alone is the first proof: the ITK follows later on the completed practice.
+    done = await service.complete(pool, 7, STAFF, BackgroundTasks())
+    assert done["status"] == "completed" and done["slots"][1]["document_id"] is None
     with pytest.raises(HTTPException) as required:
         await service.waive(pool, 7, "itk", STAFF, "Pending arrival")
     assert required.value.status_code == 409
@@ -266,7 +285,8 @@ def test_reject_invalid_final_file(encoded, mime):
 async def test_combined_permit_can_only_reuse_its_same_practice_partner(db, monkeypatch):
     pool, conn = db
     monkeypatch.setattr(service, "get_delivery_bonus", AsyncMock(return_value=None))
-    p = {**PRACTICE, "code": "kitas_working_extend"}
+    # IMK is the first proof, so the combined file reaches an already completed case.
+    p = {**PRACTICE, "code": "kitas_working_extend", "status": "completed"}
     conn.fetchrow.return_value = p
     conn.fetch.return_value = [
         {
@@ -281,10 +301,10 @@ async def test_combined_permit_can_only_reuse_its_same_practice_partner(db, monk
     assert second["reusable_document_id"] == first["document_id"] == 9
     assert manpower["reusable_document_id"] is None
     with pytest.raises(HTTPException):
-        await service.reuse(pool, 7, second["key"], STAFF, 97)
+        await service.reuse(pool, 7, second["key"], STAFF, 97, BackgroundTasks())
     with pytest.raises(HTTPException):
-        await service.reuse(pool, 7, manpower["key"], STAFF, 9)
-    await service.reuse(pool, 7, second["key"], STAFF, 9)
+        await service.reuse(pool, 7, manpower["key"], STAFF, 9, BackgroundTasks())
+    await service.reuse(pool, 7, second["key"], STAFF, 9, BackgroundTasks())
     assert any(
         "INSERT INTO practice_delivery_slots" in call.args[0]
         for call in conn.execute.await_args_list
@@ -401,17 +421,21 @@ def test_company_outputs_populate_the_existing_company_vault_cards(label, kind):
 @pytest.mark.asyncio
 async def test_same_service_reopened_practice_keeps_original_delivery_receipt(db, writes):
     pool, conn = db
-    conn.fetchval.side_effect = [PRACTICE["code"], None, True]
+    # bonus_rate, prior receipt, company-link check, then the completed view (delivered, bonus_rate)
+    conn.fetchval.side_effect = [None, PRACTICE["code"], None, True, None]
     conn.fetch.return_value = [
         {"slot_key": key, "document_id": i, "file_name": "result.pdf", "waiver_reason": None}
         for i, key in enumerate(("electronic_visa", "itk"), 1)
     ]
     result = await service.complete(pool, 7, STAFF, BackgroundTasks())
     assert result["status"] == "completed"
-    assert not any(
-        "INSERT INTO practice_delivery_completions" in c.args[0]
+    # The receipt insert can never overwrite the original one.
+    inserts = [
+        c.args[0]
         for c in conn.execute.await_args_list
-    )
+        if "INSERT INTO practice_delivery_completions" in c.args[0]
+    ]
+    assert all("ON CONFLICT (practice_id) DO NOTHING" in sql for sql in inserts)
     writes["record_delivery_bonus"].assert_not_awaited()
 
 
@@ -465,9 +489,7 @@ async def test_staged_document_lookup_matches_kind_and_practice_subject(db):
 
 
 @pytest.mark.asyncio
-async def test_renewed_imk_rewards_upload_before_completion_without_second_followup(
-    db, writes, monkeypatch
-):
+async def test_renewed_imk_upload_completes_and_rewards_without_a_followup(db, writes, monkeypatch):
     from backend.services.crm.delivery_catalog import delivery_policy
 
     pool, conn = db
@@ -479,6 +501,8 @@ async def test_renewed_imk_rewards_upload_before_completion_without_second_follo
         "staged_file",
         AsyncMock(return_value={"document_id": 9, "company_document_id": None}),
     )
+    imk = {"slot_key": "document_1", "waiver_reason": None, "document_id": 9, "file_name": "a.pdf"}
+    conn.fetch.side_effect = [[], [], [imk], [imk]]
     result = await service.upload(
         pool, practice["id"], "document_1", STAFF, request(), BackgroundTasks()
     )
@@ -491,7 +515,7 @@ async def test_renewed_imk_rewards_upload_before_completion_without_second_follo
         issued_on=None,
     )
     writes["record_visa_milestone"].assert_not_awaited()
-    assert result["status"] == "on_process"
+    assert result["status"] == "completed"
     assert result["visa_followup"] is None
 
 
@@ -502,17 +526,21 @@ async def test_explicit_combined_permit_can_satisfy_renewal_bonus_slot(db, write
     pool, conn = db
     p = {**PRACTICE, "code": "kitas_investor_2yr_extend"}
     conn.fetchrow.return_value = p
-    conn.fetch.return_value = [
+    rows = [
         {
-            "slot_key": "document_2",
+            "slot_key": key,
             "document_id": 42,
             "file_name": "combined.pdf",
             "waiver_reason": None,
             "issued_on": None,
         }
+        for key in ("document_2",)
     ]
+    # Before the reuse only document_2 holds the file; afterwards document_1 does too.
+    after = [{**rows[0], "slot_key": "document_1"}, *rows]
+    conn.fetch.side_effect = [rows, after, after]
     monkeypatch.setattr(service, "delivery_policy", delivery_policy)
-    await service.reuse(pool, p["id"], "document_1", STAFF, 42)
+    await service.reuse(pool, p["id"], "document_1", STAFF, 42, BackgroundTasks())
     writes["record_delivery_bonus"].assert_awaited_once_with(
         conn,
         p["id"],
@@ -528,14 +556,15 @@ async def test_explicit_combined_permit_can_satisfy_renewal_bonus_slot(db, write
     "status,completion,document,waiver,expected",
     [
         ("completed", True, None, None, True),
-        ("completed", True, 12, None, False),
+        # A filled slot of a completed practice accepts a corrected file.
+        ("completed", True, 12, None, True),
         # Completed before Final delivery existed: no completion record.
         ("completed", False, None, None, True),
         ("completed", True, None, "Out of scope", False),
         ("on_process", False, None, None, False),
     ],
 )
-async def test_completed_slot_repair_projection_requires_missing_permit_on_completed_practice(
+async def test_completed_slot_repair_projection_is_open_to_every_unwaived_slot(
     db, writes, status, completion, document, waiver, expected
 ):
     conn = db[1]
@@ -550,20 +579,20 @@ async def test_completed_slot_repair_projection_requires_missing_permit_on_compl
     view = await service.state(conn, {**PRACTICE, "status": status})
     assert view["delivery_recorded"] is (status == "completed" and completion)
     assert view["slots"][1]["can_repair"] is expected
-    assert not view["slots"][0]["can_repair"]
+    assert view["slots"][0]["can_repair"] is (status == "completed")
     assert view["bonus_status"] == "ineligible" and "amount_idr" not in view
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("recorded", [True, False])
-async def test_repair_publishes_only_missing_permit_and_never_triggers_issuance_or_completion(
+async def test_repair_publishes_only_its_file_and_earns_nothing_on_a_pre_cutoff_practice(
     db, writes, monkeypatch, recorded
 ):
     pool, conn = db
     conn.fetchrow.return_value = {**PRACTICE, "status": "completed"}
 
     async def value(sql, *args):
-        return recorded and "practice_delivery_completions" in sql
+        return True if recorded and "practice_delivery_completions" in sql else None
 
     conn.fetchval.side_effect = value
     monkeypatch.setattr(service, "previous_slot", AsyncMock(return_value=None))
@@ -584,7 +613,7 @@ async def test_repair_publishes_only_missing_permit_and_never_triggers_issuance_
         and "practice_delivery_completions" not in c.args[0]
         for c in conn.execute.await_args_list
     )
-    assert "repaired" in writes["audit"].await_args.args[-1]
+    assert "added after completion" in writes["audit"].await_args.args[-1]
 
 
 @pytest.mark.asyncio
@@ -597,3 +626,49 @@ async def test_replaced_company_identity_comes_from_old_slot_and_respects_other_
     assert params == [7, 19, 93, 81]
     assert "cd.id=$3 AND cd.company_id=$4" in sql and "cd.google_drive_file_id=d.file_id" in sql
     assert "s.company_document_id=cd.id AND s.company_id=cd.company_id" in sql
+
+
+def view_with(bonus_slot, trigger, **slots):
+    return {
+        "bonus_slot": bonus_slot,
+        "bonus_trigger": trigger,
+        "slots": [
+            {"key": key, "document_id": doc, "waiver_reason": waiver}
+            for key, (doc, waiver) in slots.items()
+        ],
+    }
+
+
+@pytest.mark.parametrize(
+    "view,expected",
+    [
+        # The bonus slot decides when it exists and is not waived.
+        (
+            view_with("evisa", "electronic_visa_issued", evisa=(9, None), itk=(None, None)),
+            "electronic_visa_issued",
+        ),
+        (view_with("evisa", "electronic_visa_issued", evisa=(None, None), itk=(5, None)), None),
+        # A waived bonus slot falls back to any final document.
+        (
+            view_with("evisa", "electronic_visa_issued", evisa=(None, "n/a"), itk=(5, None)),
+            "service_delivered",
+        ),
+        (view_with("evisa", "electronic_visa_issued", evisa=(None, "n/a"), itk=(None, None)), None),
+        # No bonus slot: the first document of any slot is the proof.
+        (view_with(None, None, a=(None, None), b=(3, None)), "service_delivered"),
+        (view_with(None, None, a=(None, None), b=(None, None)), None),
+    ],
+)
+def test_proof_kind_is_the_bonus_slot_else_any_final_document(view, expected):
+    assert service.proof_kind(view) == expected
+
+
+@pytest.mark.asyncio
+async def test_state_reports_the_current_bonus_rate_and_proof_readiness(db, writes):
+    conn = db[1]
+    conn.fetchval.return_value = 0
+    conn.fetch.return_value = [evisa_row()]
+    view = await service.state(conn, dict(PRACTICE))
+    assert view["bonus_rate"] == 0 and view["proof_ready"] is True
+    conn.fetch.return_value = []
+    assert (await service.state(conn, dict(PRACTICE)))["proof_ready"] is False
