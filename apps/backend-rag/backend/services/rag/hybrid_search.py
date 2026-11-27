@@ -32,6 +32,11 @@ logger = logging.getLogger(__name__)
 RRF_K = 60
 
 
+def _is_cacheable_search_result(result: Any) -> bool:
+    """A search error payload must not be cached: it would be served for the whole TTL."""
+    return not (isinstance(result, dict) and result.get("error"))
+
+
 class HybridSearchService:
     """
     Hybrid Search Service combining BM25 and dense vector search.
@@ -384,7 +389,7 @@ class HybridSearchService:
 
         return fused_results
 
-    @cached(ttl=300, prefix="hybrid_search")
+    @cached(ttl=300, prefix="hybrid_search", should_cache=_is_cacheable_search_result)
     async def search_hybrid(
         self,
         query: str,
