@@ -19,6 +19,7 @@ Guard conditions (skip silently if any fail):
 from __future__ import annotations
 
 import base64
+import enum
 import html
 import logging
 import os
@@ -27,6 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import httpx
+from httpx import ConnectError, ConnectTimeout, PoolTimeout
 
 from backend.app.core.config import settings
 from backend.services.crm.welcome.log_facts import (
@@ -42,7 +44,6 @@ from backend.services.notifications.email_audit import (
     format_send_error,
     log_email_attempt,
     notify_email_failure_critical,
-    raise_if_not_delivered,
     record_email_result,
 )
 from backend.services.notifications.email_http import get_email_client
@@ -60,6 +61,26 @@ _EMAIL_WELCOME_ACTIVE: bool = True
 ACTIVITY_ACTION = "welcome_email_sent"
 ACTIVITY_ACTION_PENDING = "welcome_email_pending"
 WELCOME_DELAY_MINUTES = 30
+# A welcome goes back to its queue after this long, at most WELCOME_MAX_FAILED_ATTEMPTS
+# times in all (counted in email_send_log), and ONLY when it surely did not go out.
+WELCOME_RETRY_DELAY = timedelta(hours=1)
+WELCOME_MAX_FAILED_ATTEMPTS = 3
+
+# Statuses by which the endpoint validated the request and refused it: nothing was sent.
+_REFUSED_STATUSES = frozenset({400, 401, 403, 404, 422})
+# Failures that happen before a request is written to the wire: nothing was sent.
+_PRE_WRITE_ERRORS = (ConnectError, ConnectTimeout, PoolTimeout)
+
+
+class WelcomeOutcome(enum.Enum):
+    """What one run of the welcome sender did for a client."""
+
+    SENT = "sent"
+    SKIPPED = "skipped"  # client missing, no address, or already welcomed
+    FAILED = "failed"  # PROVED not delivered: the only outcome that is requeued
+    UNCERTAIN = "uncertain"  # no proof either way: the mail may have gone out, never requeued
+    NOT_ATTEMPTED = "not_attempted"  # no audit row could be written, nothing was posted: requeued
+
 
 # ─── EMAIL API (Brevo via internal endpoint) ─────────────
 _EMAIL_API_URL = os.getenv(
@@ -156,20 +177,68 @@ async def process_pending_welcome_emails(db_pool: asyncpg.Pool) -> dict[str, int
             continue  # Already processed by another worker
 
         try:
-            await _send_client_welcome_impl(client_id, db_pool)
-            stats["sent"] += 1
+            outcome = await _send_client_welcome_impl(client_id, db_pool)
         except Exception as exc:
             logger.error(
                 "WelcomeEmail: send failed for client %s: %s error",
                 id_fact(client_id),
                 error_word(exc),
             )
+            # No proof of non-delivery: the failure may sit after the POST. Not requeued.
+            outcome = WelcomeOutcome.UNCERTAIN
+
+        if outcome is WelcomeOutcome.SENT:
+            stats["sent"] += 1
+        elif outcome is WelcomeOutcome.SKIPPED:
+            stats["skipped"] += 1
+        else:
             stats["failed"] += 1
+            if outcome in (WelcomeOutcome.FAILED, WelcomeOutcome.NOT_ATTEMPTED):
+                await _requeue_welcome(client_id, db_pool)
 
     return stats
 
 
-async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> None:
+async def _requeue_welcome(client_id: int, db_pool: asyncpg.Pool) -> None:
+    """Put a welcome that surely did not go out back in the queue, unless it failed enough times.
+
+    The claim in the drain loop deleted the row before the send, so without this such a
+    welcome was gone for good. Attempts are counted in the audit trail (email_send_log): every
+    POST has a row there (no audit row, no POST), and a row that is not 'sent' is an attempt
+    that did not end well: 'failed' (which is also how an UNCERTAIN send is recorded),
+    'escalated' (the health monitor's turn of a failed row) or a 'sending' row whose result
+    was never written.
+    """
+    try:
+        async with db_pool.acquire() as conn:
+            attempts = await conn.fetchval(
+                """
+                SELECT COUNT(*) FROM email_send_log
+                WHERE email_type = 'welcome' AND client_id = $1
+                  AND status IN ('failed', 'escalated', 'sending')
+                """,
+                client_id,
+            )
+            if (attempts or 0) >= WELCOME_MAX_FAILED_ATTEMPTS:
+                return
+            await conn.execute(
+                """
+                INSERT INTO welcome_email_queue (client_id, scheduled_at, created_at)
+                VALUES ($1, $2, NOW())
+                ON CONFLICT (client_id) DO NOTHING
+                """,
+                client_id,
+                datetime.now(timezone.utc) + WELCOME_RETRY_DELAY,
+            )
+    except Exception as exc:
+        logger.error(
+            "WelcomeEmail: failed to requeue for client %s: %s error",
+            id_fact(client_id),
+            error_word(exc),
+        )
+
+
+async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> WelcomeOutcome:
     async with db_pool.acquire() as conn:
         client = await conn.fetchrow(
             "SELECT id, full_name, email, nationality, assigned_to FROM clients WHERE id = $1",
@@ -177,18 +246,24 @@ async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> No
         )
         if not client:
             logger.warning("WelcomeEmail: client %s not found", id_fact(client_id))
-            return
+            return WelcomeOutcome.SKIPPED
 
         email = (client["email"] or "").strip()
         if not email:
             logger.info("WelcomeEmail: client %s has no email, skipping", id_fact(client_id))
-            return
+            return WelcomeOutcome.SKIPPED
 
-        # Idempotency check: verify not already in sent log
+        # Idempotency check: the alert is the usual marker; the audit row also protects a
+        # delivered mail when writing that marker failed.
         already_sent = await conn.fetchval(
             """
-            SELECT 1 FROM notification_alerts
+            SELECT 1
+            FROM notification_alerts
             WHERE client_id = $1 AND alert_type = $2
+            UNION ALL
+            SELECT 1
+            FROM email_send_log
+            WHERE client_id = $1 AND email_type = 'welcome' AND status = 'sent'
             LIMIT 1
             """,
             client_id,
@@ -196,7 +271,7 @@ async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> No
         )
         if already_sent:
             logger.info("WelcomeEmail: already sent for client %s, skipping", id_fact(client_id))
-            return
+            return WelcomeOutcome.SKIPPED
 
     # Language resolution — ENFORCED ENGLISH-ONLY 2026-05-26 per operator decree
     # (was NATIONALITY_LANGUAGE_MAP.get(client["nationality"] or "", "en"))
@@ -276,6 +351,15 @@ async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> No
         subject=subject,
         client_id=client_id,
     )
+    if audit_row_id is None:
+        # No durable record of the attempt means no attempt: a send the cap cannot count
+        # and the idempotency check cannot see could repeat for ever. Nothing was sent, so
+        # the caller can safely put the row back in the queue.
+        logger.warning(
+            "WelcomeEmail: no audit row for client %s, nothing sent, queued again",
+            id_fact(client_id),
+        )
+        return WelcomeOutcome.NOT_ATTEMPTED
 
     # Send — wrapped so an exception is captured into the audit trail
     # instead of propagating up and being counted as a permanent failure
@@ -285,7 +369,8 @@ async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> No
     # log line gets a reason built only from words written here (see log_facts).
     send_error: str | None = None
     log_reason = "?"
-    status_code = 0
+    outcome = WelcomeOutcome.UNCERTAIN
+    posted = False
     try:
         http = await get_email_client()
         resp = await http.post(
@@ -293,34 +378,61 @@ async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> No
             json=payload,
             headers={"X-API-Key": _EMAIL_API_KEY},
         )
+        posted = True
         status_code = resp.status_code
         if status_code != 200:
-            send_error = f"status={status_code} body={resp.text[:200]}"
+            send_error = f"status={status_code} body={_body_excerpt(resp)}"
             log_reason = "status=" + status_fact(status_code)
+            if status_code in _REFUSED_STATUSES:
+                outcome = WelcomeOutcome.FAILED
         else:
             # The endpoint answers 200 when every provider failed: its body says so.
-            raise_if_not_delivered(resp)
-    except EmailNotDelivered as e:
-        send_error = f"not delivered: {format_send_error(e)}"
-        if e.delivery_uncertain is True:
-            log_reason = "delivery uncertain"
-        else:
-            log_reason = "not delivered"
+            answer = resp.json()
+            if isinstance(answer, dict) and answer.get("success") is True:
+                outcome = WelcomeOutcome.SENT
+            elif isinstance(answer, dict) and answer.get("success") is False:
+                reason = str(answer.get("message") or "send endpoint reported failure")[:200]
+                if answer.get("delivery_uncertain") is True:
+                    send_error = "not delivered: " + format_send_error(
+                        EmailNotDelivered(reason, delivery_uncertain=True)
+                    )
+                    log_reason = "delivery uncertain"
+                else:
+                    send_error = "not delivered: " + format_send_error(EmailNotDelivered(reason))
+                    log_reason = "not delivered"
+                    outcome = WelcomeOutcome.FAILED
+            else:
+                send_error = "unreadable answer: 200 without a success flag"
+                log_reason = "unreadable answer"
     except Exception as e:
+        # Only an error that came out of the POST itself, before a request could be written,
+        # proves the mail did not go out. The same class raised while READING the answer says
+        # nothing: the endpoint may have delivered it.
         send_error = f"exception: {format_send_error(e)}"
         log_reason = error_word(e) + " error"
+        outcome = WelcomeOutcome.UNCERTAIN
+        if not posted and isinstance(e, _PRE_WRITE_ERRORS):
+            outcome = WelcomeOutcome.FAILED
 
-    if send_error is None:
-        async with db_pool.acquire() as conn:
-            await conn.execute(
-                """
-                INSERT INTO notification_alerts (client_id, alert_type, status, message, sent_at)
-                VALUES ($1, $2, 'sent', $3, NOW())
-                ON CONFLICT (client_id, alert_type, created_date) DO NOTHING
-                """,
-                client_id,
-                ACTIVITY_ACTION,
-                f"lang={lang} email={email}",
+    if outcome is WelcomeOutcome.SENT:
+        try:
+            async with db_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO notification_alerts (client_id, alert_type, status, message, sent_at)
+                    VALUES ($1, $2, 'sent', $3, NOW())
+                    ON CONFLICT (client_id, alert_type, created_date) DO NOTHING
+                    """,
+                    client_id,
+                    ACTIVITY_ACTION,
+                    f"lang={lang} email={email}",
+                )
+        except Exception as exc:
+            # The mail went out: it stays SENT. The audit row below is the second marker.
+            logger.error(
+                "WelcomeEmail: failed to write sent alert for client %s: %s error",
+                id_fact(client_id),
+                error_word(exc),
             )
         await record_email_result(
             db_pool,
@@ -333,26 +445,42 @@ async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> No
             id_fact(client_id),
             choice_fact(lang, LANGUAGES),
         )
-    else:
-        logger.error(
-            "WelcomeEmail: send failed for client %s: %s",
-            id_fact(client_id),
-            log_reason,
-        )
-        await record_email_result(
-            db_pool,
-            audit_row_id,
-            status="failed",
-            provider="brevo",
-            error_message=send_error,
-        )
-        notify_email_failure_critical(
-            email_type="welcome",
-            to_email=email,
-            subject=subject,
-            practice_id=None,
-            error=send_error,
-        )
+        return WelcomeOutcome.SENT
+
+    logger.error(
+        "WelcomeEmail: send failed for client %s: %s",
+        id_fact(client_id),
+        log_reason,
+    )
+    # The audit knows no 'uncertain' status: an uncertain send is recorded as 'failed', and
+    # the cap in _requeue_welcome counts it as such.
+    await record_email_result(
+        db_pool,
+        audit_row_id,
+        status="failed",
+        provider="brevo",
+        error_message=send_error,
+    )
+    notify_email_failure_critical(
+        email_type="welcome",
+        to_email=email,
+        subject=subject,
+        practice_id=None,
+        error=send_error or "welcome not delivered",
+    )
+    return outcome
+
+
+def _body_excerpt(resp: httpx.Response) -> str:
+    """The first 200 characters of an error answer; "" when the body cannot be read.
+
+    The status alone already classifies the answer, so a body that fails to decode must not
+    turn a refusal into an unreadable one.
+    """
+    try:
+        return resp.text[:200]
+    except Exception:
+        return ""
 
 
 # ─────────────────────────────────────────────────────────

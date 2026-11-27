@@ -811,15 +811,28 @@ async def test_a_kickoff_brochure_that_cannot_be_read_logs_one_word(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("statement", "helper_line"),
+    ("statement", "helper_line", "sender_line"),
     [
-        ("INSERT INTO email_send_log", "email_audit: log_email_attempt failed"),
-        ("UPDATE email_send_log", "email_audit: record_email_result failed for 11"),
+        (
+            "INSERT INTO email_send_log",
+            "email_audit: log_email_attempt failed",
+            # No audit row, no POST: the sender says so and the mail is not sent.
+            "WelcomeEmail: no audit row for client 7, nothing sent, queued again",
+        ),
+        (
+            "UPDATE email_send_log",
+            "email_audit: record_email_result failed for 11",
+            "WelcomeEmail: send failed for client 7: status=400",
+        ),
     ],
     ids=["the audit insert fails", "the audit update fails"],
 )
 async def test_when_the_audit_write_fails_the_senders_own_lines_stay_closed(
-    far_end: _FarEnd, caplog: pytest.LogCaptureFixture, statement: str, helper_line: str
+    far_end: _FarEnd,
+    caplog: pytest.LogCaptureFixture,
+    statement: str,
+    helper_line: str,
+    sender_line: str,
 ) -> None:
     """The audit helper is the real one. Its own records are the one named exception.
 
@@ -839,7 +852,4 @@ async def test_when_the_audit_write_fails_the_senders_own_lines_stay_closed(
         if record.name == AUDIT_LOGGER and helper_line in record.getMessage()
     ]
     assert any(statement in run for run in db.statements)
-    _line(
-        _read(caplog, unjudged=(AUDIT_LOGGER,)),
-        "WelcomeEmail: send failed for client 7: status=400",
-    )
+    _line(_read(caplog, unjudged=(AUDIT_LOGGER,)), sender_line)
