@@ -730,6 +730,39 @@ def main() -> int:
         )
     print("[bootstrap] hr_leave_balances legacy table ensured (for Migration 388)")
 
+    # 068 also gives the leave tables an updated_at trigger and the balances an index; production
+    # keeps them after Migration 388, so CI carries them too. The same function and trigger names
+    # as 068 (hr_leave_requests is not created here, so it gets none).
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE OR REPLACE FUNCTION hr_set_updated_at()
+                RETURNS TRIGGER AS $$
+                BEGIN
+                    NEW.updated_at = NOW();
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql
+                """
+            )
+        )
+        for table in ("hr_leave_types", "hr_leave_balances"):
+            conn.execute(text(f"DROP TRIGGER IF EXISTS trg_{table}_updated_at ON {table}"))
+            conn.execute(
+                text(
+                    f"CREATE TRIGGER trg_{table}_updated_at BEFORE UPDATE ON {table} "
+                    "FOR EACH ROW EXECUTE FUNCTION hr_set_updated_at()"
+                )
+            )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_hr_leave_bal_emp "
+                "ON hr_leave_balances(employee_id, balance_year)"
+            )
+        )
+    print("[bootstrap] hr leave updated_at triggers and balance index ensured")
+
     # practice_types prod-only divergence.
     #
     # The SQLModel `PracticeType` in `backend/app/modules/crm/models.py` declares

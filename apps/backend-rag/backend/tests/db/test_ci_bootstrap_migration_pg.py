@@ -269,3 +269,37 @@ def test_delivery_payroll_prerequisites_match_legacy_068(table: str) -> None:
     actual = re.search(pattern + r'\s*"""', BOOTSTRAP.read_text())
     assert expected and actual
     assert expected.group().rstrip(";").split() == actual.group().rstrip('"').split()
+
+
+def test_leave_triggers_and_index_in_ci_match_legacy_068() -> None:
+    """CI keeps 068's updated_at function, its triggers on the leave tables and the balance index."""
+    import re
+
+    legacy = (ROOT / "backend/migrations/migration_068_hr_payroll.py").read_text()
+    boot = BOOTSTRAP.read_text()
+
+    function = r"CREATE OR REPLACE FUNCTION hr_set_updated_at\(\)[\s\S]*?\$\$ LANGUAGE plpgsql"
+    expected_function = re.search(function, legacy)
+    actual_function = re.search(function, boot)
+    assert expected_function and actual_function
+    assert expected_function.group().split() == actual_function.group().split()
+
+    # 068 attaches the function to every leave table by name with one template.
+    legacy_tables = re.search(r"unnest\(ARRAY\[([\s\S]*?)\]\)", legacy).group(1)
+    for table in ("hr_leave_types", "hr_leave_balances"):
+        assert f"'{table}'" in legacy_tables
+    assert "'DROP TRIGGER IF EXISTS trg_%s_updated_at ON %I; '" in legacy
+    assert "'CREATE TRIGGER trg_%s_updated_at BEFORE UPDATE ON %I '" in legacy
+    assert "'FOR EACH ROW EXECUTE FUNCTION hr_set_updated_at();'" in legacy
+    assert 'for table in ("hr_leave_types", "hr_leave_balances"):' in boot
+    assert 'f"DROP TRIGGER IF EXISTS trg_{table}_updated_at ON {table}"' in boot
+    assert 'f"CREATE TRIGGER trg_{table}_updated_at BEFORE UPDATE ON {table} "' in boot
+    assert '"FOR EACH ROW EXECUTE FUNCTION hr_set_updated_at()"' in boot
+
+    index = "CREATE INDEX IF NOT EXISTS idx_hr_leave_bal_emp ON hr_leave_balances(employee_id, balance_year)"
+    assert index + ";" in legacy
+    pieces = re.search(
+        r'"(CREATE INDEX IF NOT EXISTS idx_hr_leave_bal_emp )"\s*"(ON hr_leave_balances\([^"]*\))"',
+        boot,
+    )
+    assert pieces and "".join(pieces.groups()) == index
