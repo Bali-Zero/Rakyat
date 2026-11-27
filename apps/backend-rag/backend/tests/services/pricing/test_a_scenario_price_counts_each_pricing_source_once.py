@@ -158,3 +158,35 @@ async def test_two_different_lines_with_the_same_amount_in_one_chunk_are_both_co
     result = await service.calculate_pricing("Contoh scenario")
 
     assert result.total_setup_cost == 10_000_000
+
+
+@pytest.mark.asyncio
+async def test_two_equal_prices_in_one_short_chunk_are_both_counted():
+    # Under ~100 characters the two context windows both span the whole chunk,
+    # so the descriptions read the same: only the position tells them apart.
+    text = "Contoh akta Rp 5.000.000 dan izin Rp 5.000.000"
+    assert len(text) < 100
+    chunk = {"id": "chunk-short", "text": text}
+    service, _ = _service({PRICING: _source(PRICING, [chunk])}, direct_results=[])
+
+    result = await service.calculate_pricing("Contoh scenario")
+
+    assert result.total_setup_cost == 10_000_000
+    assert len(result.cost_items) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_short_chunk_seen_twice_still_counts_its_prices_once_each():
+    text = "Contoh akta Rp 5.000.000 dan izin Rp 5.000.000"
+    chunk = {"id": "chunk-short", "text": text}
+    service, _ = _service(
+        {
+            "legal_architect": _source("legal_architect", [chunk]),
+            PRICING: _source(PRICING, [chunk]),
+        },
+        direct_results=[],
+    )
+
+    result = await service.calculate_pricing("Contoh scenario")
+
+    assert result.total_setup_cost == 10_000_000

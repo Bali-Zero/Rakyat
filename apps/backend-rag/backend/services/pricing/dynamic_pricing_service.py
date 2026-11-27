@@ -192,18 +192,19 @@ class DynamicPricingService:
         return "text:" + hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
     @staticmethod
-    def _dedupe_cost_items(tagged: list[tuple[str, CostItem]]) -> list[CostItem]:
+    def _dedupe_cost_items(tagged: list[tuple[str, int, CostItem]]) -> list[CostItem]:
         """Drop a cost item already counted from the same chunk.
 
-        Two items are the same price when they come from the same chunk with
-        the same description and amount. Different chunks, or different
-        lines of one chunk, with the same amount stay.
+        Two items are the same price when they come from the same chunk, at
+        the same position of that chunk's extraction, with the same
+        description and amount. Different chunks, or two prices of one chunk
+        whose context windows read the same, stay.
         """
-        seen: set[tuple[str, str, float]] = set()
+        seen: set[tuple[str, int, str, float]] = set()
         kept: list[CostItem] = []
-        for chunk_key, item in tagged:
+        for chunk_key, position, item in tagged:
             line = " ".join(item.description.lower().split())
-            key = (chunk_key, line, item.amount)
+            key = (chunk_key, position, line, item.amount)
             if key in seen:
                 continue
             seen.add(key)
@@ -243,7 +244,7 @@ class DynamicPricingService:
         )
 
         # Step 2: Extract costs from all Oracle results
-        tagged_costs: list[tuple[str, CostItem]] = []
+        tagged_costs: list[tuple[str, int, CostItem]] = []
 
         for oracle_name, oracle_data in synthesis_result.sources.items():
             if not oracle_data.get("success"):
@@ -252,8 +253,8 @@ class DynamicPricingService:
             for result in oracle_data.get("results", []):
                 text = result.get("text", "")
                 chunk_key = self._chunk_key(result)
-                for cost in self.extract_costs_from_text(text, oracle_name):
-                    tagged_costs.append((chunk_key, cost))
+                for position, cost in enumerate(self.extract_costs_from_text(text, oracle_name)):
+                    tagged_costs.append((chunk_key, position, cost))
 
         # Step 3: Also query bali_zero_pricing_hybrid directly, unless the
         # synthesis already carried that collection successfully.
@@ -269,8 +270,9 @@ class DynamicPricingService:
             for result in pricing_results.get("results", []):
                 text = result.get("text", "")
                 chunk_key = self._chunk_key(result)
-                for cost in self.extract_costs_from_text(text, self.PRICING_COLLECTION):
-                    tagged_costs.append((chunk_key, cost))
+                costs = self.extract_costs_from_text(text, self.PRICING_COLLECTION)
+                for position, cost in enumerate(costs):
+                    tagged_costs.append((chunk_key, position, cost))
 
         # Step 4: Deduplicate (same chunk, same amount) and aggregate
         all_costs = self._dedupe_cost_items(tagged_costs)
