@@ -83,7 +83,6 @@ class TestGetGeminiClient:
         monkeypatch.delenv("KG_GOOGLE_API_KEY", raising=False)
         mock_settings.google_api_key = None
         mock_settings.google_ai_studio_key = None
-        mock_settings.google_imagen_api_key = None
 
         b = KGIncrementalBuilder()
         with patch.dict("sys.modules", {"google": MagicMock(), "google.genai": MagicMock()}):
@@ -98,7 +97,6 @@ class TestGetGeminiClient:
         monkeypatch.setenv("KG_GOOGLE_API_KEY", "kg-dedicated-key")
         mock_settings.google_api_key = "shared-bot-key"
         mock_settings.google_ai_studio_key = None
-        mock_settings.google_imagen_api_key = None
 
         mock_genai = MagicMock()
         b = KGIncrementalBuilder()
@@ -117,7 +115,6 @@ class TestGetGeminiClient:
         monkeypatch.delenv("KG_GOOGLE_API_KEY", raising=False)
         mock_settings.google_api_key = "shared-bot-key"
         mock_settings.google_ai_studio_key = None
-        mock_settings.google_imagen_api_key = None
 
         mock_genai = MagicMock()
         b = KGIncrementalBuilder()

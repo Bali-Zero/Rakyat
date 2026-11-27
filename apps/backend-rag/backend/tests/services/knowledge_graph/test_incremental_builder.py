@@ -111,7 +111,6 @@ def test_get_gemini_client_returns_none_when_google_key_is_missing(
     monkeypatch.delenv("KG_GOOGLE_API_KEY", raising=False)
     monkeypatch.setattr(builder_module.settings, "google_api_key", "")
     monkeypatch.setattr(builder_module.settings, "google_ai_studio_key", "")
-    monkeypatch.setattr(builder_module.settings, "google_imagen_api_key", "")
     builder = KGIncrementalBuilder(db_pool=None)
 
     assert builder._get_gemini_client() is None

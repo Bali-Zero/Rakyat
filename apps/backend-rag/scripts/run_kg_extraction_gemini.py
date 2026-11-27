@@ -144,12 +144,12 @@ async def run_extraction(
     logger.info("=" * 60)
 
     # Verify Google AI Studio config
-    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_IMAGEN_API_KEY")
+    api_key = os.environ.get("GOOGLE_API_KEY")
 
     logger.info(f"API Key: {'set' if api_key else 'NOT SET'}")
 
     if not api_key:
-        logger.error("Missing GOOGLE_API_KEY or GOOGLE_IMAGEN_API_KEY!")
+        logger.error("Missing GOOGLE_API_KEY!")
         return
 
     # Clear old data if requested

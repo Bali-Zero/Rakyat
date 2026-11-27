@@ -235,9 +235,9 @@ async def run_all_extractions(
     logger.info("=" * 70)
 
     # Verify API key
-    api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GOOGLE_IMAGEN_API_KEY")
+    api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key and not dry_run:
-        logger.error("❌ Missing GOOGLE_API_KEY or GOOGLE_IMAGEN_API_KEY!")
+        logger.error("❌ Missing GOOGLE_API_KEY!")
         return
 
     # Get current stats

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import os
 import socket
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -29,7 +28,6 @@ from backend.services.intel.trend_hunter.adapters import (
     RedditAdapter,
     RSSAdapter,
     SourceAdapter,
-    XAIAdapter,
     gather_sources,
 )
 from backend.services.intel.trend_hunter.types import (
@@ -104,16 +102,13 @@ class TrendHunterOrchestrator:
 
     @staticmethod
     def _default_adapters(*, degraded: bool) -> list[SourceAdapter]:
-        """RSS always; xAI only on Pro (Law 2 OSINT blindato).
+        """RSS always; Reddit and Google Trends only on Pro.
 
         Reddit + GoogleTrends are live no-auth public-RSS adapters
         (B9 resurrection 2026-07-14); they stay Pro-only alongside xAI.
         """
         adapters: list[SourceAdapter] = [RSSAdapter()]
         if not degraded:
-            grok_key = os.environ.get("GROK_API_KEY")
-            if grok_key:
-                adapters.append(XAIAdapter(api_key=grok_key))
             adapters.append(RedditAdapter())
             adapters.append(GoogleTrendsAdapter())
         return adapters

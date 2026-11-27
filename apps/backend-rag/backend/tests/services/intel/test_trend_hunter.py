@@ -230,12 +230,13 @@ async def test_orchestrator_default_adapters_degraded_excludes_xai(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_default_adapters_pro_includes_xai(monkeypatch):
+async def test_orchestrator_default_adapters_pro_never_includes_xai(monkeypatch):
+    """The xAI skeleton was removed: a stray GROK_API_KEY no longer adds an adapter."""
     monkeypatch.setenv("GROK_API_KEY", "fake-key")
     adapters = TrendHunterOrchestrator._default_adapters(degraded=False)
     names = {a.name for a in adapters}
     assert "rss" in names
-    assert "xai" in names
+    assert "xai" not in names
 
 
 # ── Starvation receptor (scar #2: green cron, empty output) ─────────────

@@ -444,16 +444,8 @@ def get_reranker(
     Returns:
         A reranker instance (CrossEncoderReranker or legacy ReRanker)
     """
-    # Check if we should use external API (legacy behavior)
-    use_external = getattr(settings, "zerank_api_key", None) and not force_local
-
-    if use_external:
-        # Import here to avoid circular imports
-        from backend.core.reranker import ReRanker
-
-        logger.info("Using external Ze-Rank 2 API reranker")
-        return ReRanker(model_name=model_name)
-
+    # The external Ze-Rank API reranker was removed (2026-11-27): local only.
+    # `force_local` stays in the signature for caller compatibility.
     logger.info("Using local CrossEncoderReranker")
     return CrossEncoderReranker(model_name=model_name)
 

@@ -15,7 +15,6 @@ Currently implemented:
 - GoogleTrendsAdapter — public no-auth Google Trends daily RSS (geo=ID)
 
 Placeholders (Sprint 2+):
-- XAIAdapter — Grok search via HTTP (GROK_API_KEY, Law 2 exception)
 - PlaywrightScraper — Bali Post, Antara
 """
 
@@ -210,41 +209,6 @@ class RSSAdapter(SourceAdapter):
                 "feed list needs replacement"
             )
         return results
-
-
-class XAIAdapter(SourceAdapter):
-    """Grok search (HTTP, Law 2 OSINT exception).
-
-    Uses xAI's /v1/live-search endpoint to query Indonesia visa/KBLI/tax
-    signals in last 24h. Requires GROK_API_KEY env var.
-    """
-
-    name = "xai"
-
-    def __init__(
-        self,
-        api_key: str,
-        queries: list[str] | None = None,
-        http_timeout: float = 15.0,
-    ) -> None:
-        self.api_key = api_key
-        self.queries = queries or [
-            "Indonesia KBLI 2025 compliance latest",
-            "Bali visa enforcement news this week",
-            "PT PMA Indonesia regulatory update",
-            "Coretax DJP notification Indonesia",
-        ]
-        self.http_timeout = http_timeout
-
-    async def fetch(self) -> list[NormalizedSignal]:
-        # Skeleton — actual xAI endpoint integration deferred until we verify
-        # the current /v1/live-search or /v1/messages contract with Grok-4.
-        # Returns empty gracefully so the orchestrator keeps running.
-        logger.info(
-            "xai adapter skeleton — not yet wired; skipping %d queries",
-            len(self.queries),
-        )
-        return []
 
 
 class RedditAdapter(SourceAdapter):
