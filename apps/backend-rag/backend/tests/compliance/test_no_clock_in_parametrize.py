@@ -34,6 +34,34 @@ worker, giving each worker a different generated test ID for the same
 logical test — pytest-xdist refuses the entire run with "Different tests
 were collected between gwN and gwM" before executing a single test. See
 `_NONDETERMINISTIC_NAMES` below for the guard's own docstring on this half.
+
+What "in a decorator" covers (2026-11-28): the decorator expression itself; a
+lambda called on the spot, and the default values of any lambda or def, which
+run when they are built; the module-level functions it calls by name and the
+functions those define and call, at any depth; and the module-level names it
+reads, with what their assignment computed at import.
+
+Known limits, as found by review (what is known, not a proof that nothing
+else escapes). The guard does not see:
+- a helper imported from another module, an attribute or method call
+  (`obj.helper()`), `functools.partial`, or a helper passed by reference or
+  through an alias, including a lambda bound to a module name and then
+  called (`make = lambda: now()`, then `[make()]`);
+- a bare `@helper` decorator, and class attributes;
+- a lambda handed to something that calls it at once (`map`,
+  `sorted(key=...)`): it is treated as deferred;
+- module-level names bound other than by a plain top-level `NAME = ...` or
+  `NAME: T = ...`: tuple unpacking (`A, B = now(), x`), and names or helpers
+  bound inside a module-level `if`, `try`, `with` or `for`. A name assigned
+  more than once is read from its LAST assignment, wherever the decorator is;
+- a nested def that calls a sibling nested def: that call is resolved
+  against the module-level helpers only;
+- module-level constants read in test BODIES (frozen at collection too, but
+  outside a decorator, so outside this guard).
+Local scope is read only in part: a comprehension variable in a decorator,
+a called lambda's parameters, and a nested def's closure over its helper's
+locals are not treated as local, so a name they share with a clock constant
+resolves to the module constant (an over-match, not a miss).
 """
 
 from __future__ import annotations
@@ -88,35 +116,69 @@ _NONDETERMINISTIC_NAMES = frozenset(
 )
 
 
-def _module_helpers(tree: ast.Module) -> dict[str, ast.AST]:
-    """Functions defined at module level, by name: a decorator that calls one
-    runs its body at collection, exactly as if it were written inline."""
-    return {
-        node.name: node
-        for node in tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-    }
+def _module_scope(tree: ast.Module) -> tuple[dict[str, ast.AST], dict[str, ast.AST]]:
+    """Module-level functions, and module-level names bound by a plain assignment,
+    each by name. A decorator that calls such a function runs its body at
+    collection; a decorator that names such a value reads what the module
+    computed at import, which is collection too."""
+    helpers: dict[str, ast.AST] = {}
+    values: dict[str, ast.AST] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            helpers[node.name] = node
+        elif isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    values[target.id] = node.value
+        elif (
+            isinstance(node, ast.AnnAssign)
+            and node.value is not None
+            and isinstance(node.target, ast.Name)
+        ):
+            values[node.target.id] = node.value
+    return helpers, values
 
 
-def _eager_nodes(roots: list[ast.AST]) -> list[ast.AST]:
-    """The nodes that run when their roots are evaluated. A lambda or a nested
-    def runs later, when a test calls it, so nothing inside it is returned."""
+def _built_now(function: ast.AST) -> list[ast.AST]:
+    """What Python evaluates when a lambda or a def is BUILT: its default values,
+    and a def's decorators. Its body runs only when it is called."""
+    args = function.args
+    built = [*args.defaults, *(default for default in args.kw_defaults if default is not None)]
+    return built + list(getattr(function, "decorator_list", []))
+
+
+def _eager_nodes(roots: list[ast.AST]) -> tuple[list[ast.AST], dict[str, ast.AST]]:
+    """The nodes that run when their roots are evaluated, and the functions they
+    define, by name. The body of a lambda or a nested def runs later, when a test
+    calls it, so it is left out, except for a lambda called on the spot."""
     nodes: list[ast.AST] = []
+    defined: dict[str, ast.AST] = {}
     stack = list(roots)
     while stack:
         node = stack.pop()
-        if isinstance(node, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(node, ast.Lambda):
+            stack.extend(_built_now(node))
+            continue
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            defined[node.name] = node
+            stack.extend(_built_now(node))
             continue
         nodes.append(node)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Lambda):
+            stack.append(node.func.body)
         stack.extend(ast.iter_child_nodes(node))
-    return nodes
+    return nodes, defined
 
 
-def _eager_calls(helper: ast.AST | None) -> list[ast.Call]:
-    """The calls a module helper makes when it is called, one level deep."""
-    if helper is None:
-        return []
-    return [node for node in _eager_nodes(list(helper.body)) if isinstance(node, ast.Call)]
+def _local_names(function: ast.AST, nodes: list[ast.AST]) -> frozenset[str]:
+    """Names local to a function: its parameters and every name it assigns."""
+    args = function.args
+    params = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+    params += [arg for arg in (args.vararg, args.kwarg) if arg is not None]
+    stored = {
+        node.id for node in nodes if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
+    return frozenset({param.arg for param in params} | stored)
 
 
 def _called_name(call: ast.Call) -> str | None:
@@ -135,37 +197,51 @@ def _reads_a_random_value(call: ast.Call) -> bool:
     return _called_name(call) in _NONDETERMINISTIC_NAMES
 
 
-def _helper_reads(name: str, helpers: dict[str, ast.AST], reads, seen: set[str]) -> bool:
-    """Whether calling the module helper `name` makes a call `reads` matches,
-    itself or through the module helpers it calls when it runs, at any depth."""
-    if name in seen or name not in helpers:
+def _function_reads(function: ast.AST, module, reads, seen: set) -> bool:
+    """Whether calling `function` reads a source `reads` matches, at any depth."""
+    if id(function) in seen:
         return False
-    seen.add(name)
-    for call in _eager_calls(helpers[name]):
-        if reads(call):
+    seen.add(id(function))
+    nodes, defined = _eager_nodes(list(function.body))
+    local = _local_names(function, nodes) | defined.keys()
+    return any(_node_reads(node, module, reads, seen, defined, local) for node in nodes)
+
+
+def _node_reads(node: ast.AST, module, reads, seen: set, defined, local) -> bool:
+    """Whether evaluating one eager node reads a source `reads` matches: the call
+    itself, a function it calls by name (defined in the same function, or at
+    module level), or a module-level value it names."""
+    helpers, values = module
+    if isinstance(node, ast.Call):
+        if reads(node):
             return True
-        if isinstance(call.func, ast.Name) and _helper_reads(call.func.id, helpers, reads, seen):
-            return True
-    return False
+        if not isinstance(node.func, ast.Name):
+            return False
+        name = node.func.id
+        target = defined.get(name) or (None if name in local else helpers.get(name))
+        return target is not None and _function_reads(target, module, reads, seen)
+    if not (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)):
+        return False
+    if node.id in local or node.id not in values or ("value", node.id) in seen:
+        return False
+    seen.add(("value", node.id))
+    nodes, defined_here = _eager_nodes([values[node.id]])
+    return any(_node_reads(sub, module, reads, seen, defined_here, frozenset()) for sub in nodes)
 
 
 def _decorator_reads(source: str, reads) -> list[int]:
-    """Line numbers of calls in any decorator expression that read a source
-    `reads` matches when the decorator is evaluated, i.e. at collection."""
+    """Line numbers of the calls and names in any decorator expression that read
+    a source `reads` matches when the decorator is evaluated, i.e. at collection."""
     tree = ast.parse(source)
-    helpers = _module_helpers(tree)
+    module = _module_scope(tree)
     found: list[int] = []
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             continue
         for decorator in node.decorator_list:
-            for sub in _eager_nodes([decorator]):
-                if not isinstance(sub, ast.Call):
-                    continue
-                if reads(sub) or (
-                    isinstance(sub.func, ast.Name)
-                    and _helper_reads(sub.func.id, helpers, reads, set())
-                ):
+            nodes, defined = _eager_nodes([decorator])
+            for sub in nodes:
+                if _node_reads(sub, module, reads, set(), defined, frozenset()):
                     found.append(sub.lineno)
     return sorted(set(found))
 
@@ -359,6 +435,149 @@ def test_guard_allows_a_lambda_in_the_decorator_that_reads_the_clock_later() -> 
     )
     assert _clock_calls_in_decorators(innocent) == []
     assert _nondeterministic_calls_in_decorators(innocent) == []
+
+
+def test_guard_flags_a_lambda_called_on_the_spot_or_a_lambda_default() -> None:
+    """GUILT (F1): a lambda called in the decorator, or in a helper the decorator
+    calls, runs at collection; so does the default value of a lambda."""
+    guilty = textwrap.dedent(
+        """
+        import uuid
+        from datetime import datetime, timezone
+
+        import pytest
+
+        def tokens():
+            return [(lambda: uuid.uuid4())()]
+
+        @pytest.mark.parametrize("now", [(lambda: datetime.now(timezone.utc))()])
+        @pytest.mark.parametrize("make", [lambda at=datetime.now(timezone.utc): at])
+        @pytest.mark.parametrize("token", tokens())
+        def test_deadline(now, make, token):
+            assert now and make() and token
+        """
+    )
+    assert _clock_calls_in_decorators(guilty) == [10, 11]
+    assert _nondeterministic_calls_in_decorators(guilty) == [12]
+
+
+def test_guard_flags_a_nested_def_a_helper_calls_by_name() -> None:
+    """GUILT (F2): a def nested in a helper and called there runs at collection."""
+    guilty = textwrap.dedent(
+        """
+        from datetime import datetime, timezone
+
+        import pytest
+
+        def cases():
+            def one():
+                return datetime.now(timezone.utc)
+            return [one()]
+
+        @pytest.mark.parametrize("deadline", cases())
+        def test_deadline(deadline):
+            assert deadline
+        """
+    )
+    assert _clock_calls_in_decorators(guilty) == [11]
+
+
+def test_guard_allows_a_nested_def_a_helper_only_returns() -> None:
+    """INNOCENCE (F2): a nested def handed to the test runs in the test body."""
+    innocent = textwrap.dedent(
+        """
+        from datetime import datetime, timezone
+
+        import pytest
+
+        def cases():
+            def one():
+                return datetime.now(timezone.utc)
+            return [one]
+
+        @pytest.mark.parametrize("make", cases())
+        def test_deadline(make):
+            assert make()
+        """
+    )
+    assert _clock_calls_in_decorators(innocent) == []
+
+
+def test_guard_flags_a_module_constant_read_by_a_decorator() -> None:
+    """GUILT (F3): a module constant is computed at import, i.e. at collection,
+    whether the decorator names it, a helper returns it, or another constant does."""
+    guilty = textwrap.dedent(
+        """
+        import uuid
+        from datetime import datetime, timezone
+
+        import pytest
+
+        NOW = datetime.now(timezone.utc)
+        CASES = [NOW]
+        TOKENS: list = [uuid.uuid4()]
+
+        def cases():
+            return CASES
+
+        @pytest.mark.parametrize("deadline", CASES)
+        @pytest.mark.parametrize("again", cases())
+        @pytest.mark.parametrize("token", TOKENS)
+        def test_deadline(deadline, again, token):
+            assert deadline and again and token
+        """
+    )
+    assert _clock_calls_in_decorators(guilty) == [14, 15]
+    assert _nondeterministic_calls_in_decorators(guilty) == [16]
+
+
+def test_guard_allows_a_static_constant_a_local_shadow_and_a_constant_used_in_a_body() -> None:
+    """INNOCENCE (F3): a constant that reads nothing; a helper whose local name
+    shadows a clock constant; a clock constant read only in a test body."""
+    innocent = textwrap.dedent(
+        """
+        from datetime import datetime, timezone
+
+        import pytest
+
+        SHAPES = ["naive", "aware"]
+        CASES = [datetime.now(timezone.utc)]
+
+        def cases():
+            CASES = ["fixed"]
+            return CASES
+
+        @pytest.mark.parametrize("shape", SHAPES)
+        @pytest.mark.parametrize("case", cases())
+        def test_deadline(shape, case):
+            assert shape and case and CASES
+        """
+    )
+    assert _clock_calls_in_decorators(innocent) == []
+
+
+def test_guard_ends_on_module_constants_that_name_each_other() -> None:
+    """The value walk stops on a cycle of module constants: a cycle that reaches
+    the clock is flagged, one that reaches nothing is not, and both end."""
+    source = textwrap.dedent(
+        """
+        from datetime import datetime, timezone
+
+        import pytest
+
+        A = [B]
+        B = [A]
+        C = [D]
+        D = [C, datetime.now(timezone.utc)]
+
+        @pytest.mark.parametrize("still", A)
+        @pytest.mark.parametrize("ages", C)
+        def test_cycle(still, ages):
+            assert still and ages
+        """
+    )
+    assert _clock_calls_in_decorators(source) == [12]
+    assert _nondeterministic_calls_in_decorators(source) == []
 
 
 def test_guard_does_not_flag_the_clock_inside_a_test_or_fixture() -> None:
