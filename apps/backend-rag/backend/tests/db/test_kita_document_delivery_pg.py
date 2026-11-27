@@ -37,14 +37,15 @@ CREATE TABLE documents(id serial primary key,practice_id int,client_id int,famil
 CREATE TABLE companies(id int primary key);
 CREATE TABLE company_documents(id serial primary key,company_id int,google_drive_file_id text,client_visible boolean);
 CREATE TABLE client_company_links(company_id int,client_id int);
-CREATE TABLE activity_log(entity_type text,entity_id int,action text,performed_by text,description text);
+CREATE TABLE activity_log(entity_type text,entity_id int,action text,performed_by text,description text,
+    performed_at timestamptz DEFAULT now(),changes jsonb);
 CREATE TABLE timeline_events(client_id int,practice_id int,event_type text,title text,description text,
     event_date timestamptz,client_visible boolean,color text,created_by text);
 CREATE TABLE team_members(id varchar(36) primary key,email text,role text,active boolean);
 CREATE TABLE hr_employees(id int primary key,team_member_id varchar(36) REFERENCES team_members(id),is_active boolean,profile jsonb);
 CREATE TABLE hr_bonus_rates(id serial primary key,practice_type_code text unique,is_active boolean,
     effective_from date,effective_to date,amount_idr bigint,notes text,updated_at timestamptz);
-CREATE TABLE hr_bonus_ledger(id bigserial primary key, practice_id int,employee_id int,practice_type_code text, payroll_period_id int,
+CREATE TABLE hr_bonus_ledger(id bigserial primary key, practice_id int NOT NULL REFERENCES practices(id) ON DELETE RESTRICT,employee_id int,practice_type_code text, payroll_period_id int,
     bonus_rate_id int,amount_idr bigint,awarded_at timestamptz,status text,notes text);
 CREATE TABLE hr_payroll_periods(id serial PRIMARY KEY,period_start date,payroll_month int,payroll_year int,status text);
 """
@@ -339,10 +340,15 @@ async def test_client_cannot_remove_final_evidence_and_staff_can_repair_after_co
         assert view["slots"][1]["can_repair"] and not view["slots"][0]["can_repair"]
         assert view["visa_followup"]["fulfilled_at"] is None
     tasks = BackgroundTasks()
-    with pytest.raises(HTTPException):
-        await service.upload(
-            pool, 7, "electronic_visa", STAFF, final_file("electronic-visa"), tasks, repair=True
-        )
+    async with pool.acquire() as conn:
+        audited = await conn.fetchval("SELECT count(*) FROM activity_log WHERE entity_id=7")
+    # The very file already in the slot: the current view, nothing written (A3a).
+    replay = await service.upload(
+        pool, 7, "electronic_visa", STAFF, final_file("electronic-visa"), tasks, repair=True
+    )
+    assert replay["slots"][0]["document_id"] == view["slots"][0]["document_id"]
+    async with pool.acquire() as conn:
+        assert await conn.fetchval("SELECT count(*) FROM activity_log WHERE entity_id=7") == audited
     with pytest.raises(HTTPException):
         await service.upload(
             pool,
@@ -366,10 +372,11 @@ async def test_client_cannot_remove_final_evidence_and_staff_can_repair_after_co
         pool, 7, "document_2", STAFF, final_file("restored-itk"), tasks, repair=True
     )
     assert repeated["slots"][1]["document_id"] == repaired["slots"][1]["document_id"]
-    with pytest.raises(HTTPException):
-        await service.upload(
-            pool, 7, "document_2", STAFF, final_file("different-live-itk"), tasks, repair=True
-        )
+    # A practice Final delivery completed takes a corrected file: it replaces the live one.
+    corrected = await service.upload(
+        pool, 7, "document_2", STAFF, final_file("different-live-itk"), tasks, repair=True
+    )
+    assert corrected["slots"][1]["document_id"] != repaired["slots"][1]["document_id"]
     async with pool.acquire() as conn:
         assert original == await conn.fetchrow(
             "SELECT delivered_at,delivered_by FROM practice_delivery_completions WHERE practice_id=7"
@@ -381,7 +388,7 @@ async def test_client_cannot_remove_final_evidence_and_staff_can_repair_after_co
         assert await conn.fetchval("SELECT count(*) FROM timeline_events WHERE practice_id=7") == 1
         assert [d["file_name"] for d in (await service.portal_files(conn, 7, 31))["documents"]] == [
             "electronic-visa.pdf",
-            "restored-itk.pdf",
+            "different-live-itk.pdf",
         ]
 
 

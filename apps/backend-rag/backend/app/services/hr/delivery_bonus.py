@@ -78,14 +78,21 @@ async def record_delivery_bonus(
     event_kind: str,
     *,
     issued_on: date | None = None,
+    earned_at: datetime | None = None,
 ) -> dict | None:
-    """Call inside the practice mutation's transaction after recording the qualifying output."""
+    """Call inside the practice mutation's transaction after recording the qualifying output.
+
+    The caller holds the practice row lock. A receipt that exists is returned as it is: no INSERT,
+    no wait on HR's lock of that row. ``earned_at`` is the instant the proof first existed when
+    that is earlier than now (it dates the receipt, its bonus month and its rate; recorded_at stays now).
+    """
+    previous = await get_delivery_bonus(conn, practice_id)
+    if previous:
+        return previous
     recorded = datetime.now(WITA)
+    earned = earned_at or recorded
     if event_kind == "electronic_visa_issued":
         if issued_on is None or issued_on > recorded.date():
-            previous = await get_delivery_bonus(conn, practice_id)
-            if previous:
-                return previous
             raise ValueError(
                 "An issued Electronic Visa needs its actual issue date, up to today in Bali"
             )
@@ -104,7 +111,7 @@ async def record_delivery_bonus(
                CASE WHEN old.id IS NOT NULL THEN old.amount_idr
                     WHEN employee.ineligible THEN NULL
                     WHEN rate.forfeit_below_idr IS NULL OR paid.below IS FALSE THEN rate.amount_idr END,
-               old.id, $5, $8, CASE WHEN old.id IS NULL THEN employee.member_id END,
+               old.id, $9, $8, CASE WHEN old.id IS NULL THEN employee.member_id END,
                old.id IS NULL AND employee.ineligible,
                old.id IS NULL AND NOT employee.ineligible AND COALESCE(paid.below, FALSE)
         FROM (SELECT 1) seed
@@ -132,10 +139,11 @@ async def record_delivery_bonus(
         service_code,
         assigned_to,
         event_kind,
-        recorded,
-        payroll_award_date(recorded),
-        recorded.date(),
+        earned,
+        payroll_award_date(earned),
+        earned.astimezone(WITA).date(),
         issued_on,
+        recorded,
     )
     if (
         event

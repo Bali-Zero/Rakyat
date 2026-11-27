@@ -3,14 +3,16 @@
 import base64
 import binascii
 import hashlib
-from datetime import date
+import json
+from datetime import date, datetime
+from itertools import groupby
 from typing import Any
 
 from fastapi import BackgroundTasks, HTTPException
 
 from backend.app.deps.process_access import assignment_clause, process_assignees
 from backend.app.routers.crm_enhanced_documents import DocumentUploadBase64, upload_document_base64
-from backend.app.services.hr.delivery_bonus import get_delivery_bonus, record_delivery_bonus
+from backend.app.services.hr.delivery_bonus import WITA, get_delivery_bonus, record_delivery_bonus
 from backend.app.services.hr.hr_service import business_today
 from backend.app.utils.client_pools import caller_pool_peers
 from backend.app.utils.crm_utils import is_crm_admin
@@ -54,6 +56,8 @@ _ACCEPTED = (
     r"^(?:Final document uploaded|Missing final permit repaired|Final proof added after completion"
     r"|Combined permit confirmed for slot): (.+)$"
 )
+# A waiver is also history: it can be what made an earlier upload the proof.
+_WAIVED = r"^Delivery slot (\S+) inapplicable: "
 # Timeline text of the completion row, by what the client can see (delivery_progress.wording_of).
 _COMPLETION_NOTE = {
     PARTIAL: "First final documents delivered; the remaining documents will follow",
@@ -138,6 +142,64 @@ async def accepted_keys(conn: Any, practice_id: int) -> set[str]:
     return {row["key"] for row in rows}
 
 
+async def first_proof_instant(
+    conn: Any, p: dict, policy: dict | None = None
+) -> tuple[datetime, str | None]:
+    """When a practice first held its proof, and who was assigned then; read-only, durable history only.
+
+    Call under the practice row lock. The activity rows outlive the document and the slot row, so an
+    upload archived since still counts; a waiver counts too (it can be what made an earlier upload the
+    proof). The live state decides whether a receipt is due; this decides when and for whom.
+    ``now`` only when no recorded instant qualifies. The assignee is None (HR resolves it) whenever
+    the history cannot say who it was.
+    """
+    policy = policy or delivery_policy(p["code"]) or {}
+    bonus_key = policy.get("bonus_slot")
+    rows = await conn.fetch(
+        """SELECT performed_at, substring(description from $2) AS accepted,
+                  substring(description from $3) AS waived
+           FROM activity_log WHERE entity_type='practice' AND entity_id=$1
+             AND performed_at IS NOT NULL AND (description ~ $2 OR description ~ $3)
+           ORDER BY performed_at""",
+        p["id"],
+        _ACCEPTED,
+        _WAIVED,
+    )
+    accepted: set[str] = set()
+    waived: set[str] = set()
+    instant: datetime | None = None
+    for at, group in groupby(rows, key=lambda r: r["performed_at"]):
+        # Rows of one instant are one event. Fold, never unfold: an acceptance clears a waiver of
+        # its key (the slot upsert does), so within an instant the acceptances go last.
+        events = list(group)
+        waived.update(r["waived"] for r in events if r["waived"])
+        for r in events:
+            if r["accepted"]:
+                accepted.add(r["accepted"])
+                waived.discard(r["accepted"])
+        # The bonus slot is the proof while it stands (not waived); otherwise any accepted document is.
+        proven = bonus_key in accepted if bonus_key and bonus_key not in waived else bool(accepted)
+        if proven:
+            instant = at
+            break
+    when = instant or datetime.now(WITA)
+    moves = await conn.fetch(
+        """SELECT performed_at,
+                  CASE WHEN jsonb_typeof(changes)='object' AND changes ? 'assigned_to'
+                       THEN NULLIF(btrim(changes->>'assigned_to'), '') END AS assignee
+           FROM activity_log WHERE entity_type='practice' AND entity_id=$1
+             AND ((jsonb_typeof(changes)='object' AND changes ? 'assigned_to')
+                  OR description ~ '^Updated: .*assigned_to') ORDER BY performed_at""",
+        p["id"],
+    )
+    if any(m["performed_at"] is None for m in moves):
+        return when, None  # an undated move: who held it at that instant is unknowable
+    if not any(m["performed_at"] > when for m in moves):
+        return when, p["assigned_to"]
+    before = [m for m in moves if m["performed_at"] <= when]
+    return when, (before[-1]["assignee"] if before else None)
+
+
 async def has_ledger(conn: Any, practice_id: int) -> bool:
     return bool(
         await conn.fetchval(
@@ -219,12 +281,13 @@ async def state(conn: Any, p: dict, user: dict | None = None) -> dict:
     for slot in resolved:
         # A practice completed before Final delivery existed (2026-11-24) has no
         # completion record, yet its issued permit must still reach the case. A November
-        # one takes every empty required document, its proof included.
+        # one takes every empty required document, its proof included, and so does a practice
+        # Final delivery completed (a document archived since leaves its slot empty).
         slot["can_repair"] = bool(
             completed
             and not slot["document_id"]
             and not slot["waiver_reason"]
-            and (legacy or document_type(slot["key"], slot["label"]) in _PERMIT_TYPES)
+            and (legacy or delivered or document_type(slot["key"], slot["label"]) in _PERMIT_TYPES)
         )
         if (
             slot["key"] == policy["bonus_slot"]
@@ -278,13 +341,53 @@ def slot_for(view: dict, key: str) -> dict:
     raise HTTPException(400, "This slot is not part of the practice's delivery")
 
 
-async def audit(conn: Any, practice_id: int, actor: str, description: str) -> None:
+async def audit(
+    conn: Any, practice_id: int, actor: str, description: str, *, changes: dict | None = None
+) -> None:
     await conn.execute(
-        """INSERT INTO activity_log(entity_type, entity_id, action, performed_by, description)
-           VALUES ('practice', $1, 'updated', $2, $3)""",
+        # clock_timestamp(), not the default now() (the transaction START): every caller holds the
+        # practice row lock, so the stamp orders this row against a PATCH that took the lock first.
+        """INSERT INTO activity_log(entity_type, entity_id, action, performed_by, description,
+                                    changes, performed_at)
+           VALUES ('practice', $1, 'updated', $2, $3, $4::text::jsonb, clock_timestamp())""",
         practice_id,
         actor,
         description,
+        json.dumps(changes) if changes else None,
+    )
+
+
+async def accepted_file(conn: Any, key: str, document_id: int) -> dict:
+    """What an acceptance row records: the slot, its document and that document's storage pointer."""
+    return {
+        "slot": key,
+        "document_id": document_id,
+        "file_id": await conn.fetchval("SELECT file_id FROM documents WHERE id=$1", document_id),
+    }
+
+
+async def file_unchanged(conn: Any, p: dict, key: str, document_id: int) -> bool:
+    """P7a: the slot's document still is the very file its latest acceptance recorded.
+
+    A stored marker or hash is no proof of the current bytes (a documents PATCH moves `file_id` and keeps
+    both). An acceptance row written before this check has no `file_id`: it never vouches.
+    """
+    recorded = await conn.fetchrow(
+        """SELECT (changes->>'document_id')::int AS document_id, changes->>'file_id' AS file_id
+           FROM activity_log WHERE entity_type='practice' AND entity_id=$1
+             AND jsonb_typeof(changes)='object' AND changes->>'slot'=$2 AND changes ? 'file_id'
+           ORDER BY performed_at DESC NULLS LAST LIMIT 1""",
+        p["id"],
+        key,
+    )
+    current = await conn.fetchval(
+        "SELECT NULLIF(file_id,'') FROM documents WHERE id=$1", document_id
+    )
+    return bool(
+        recorded
+        and current
+        and recorded["document_id"] == document_id
+        and recorded["file_id"] == current
     )
 
 
@@ -515,7 +618,13 @@ async def reuse(pool: Any, practice_id: int, key: str, user: dict, document_id: 
         else:
             await apply_document_milestone(conn, p, view, key)
         await retire_replaced_file(conn, p, previous)
-        await audit(conn, practice_id, user["email"], f"Combined permit confirmed for slot: {key}")
+        await audit(
+            conn,
+            practice_id,
+            user["email"],
+            f"Combined permit confirmed for slot: {key}",
+            changes=await accepted_file(conn, key, document_id),
+        )
         updated = await state(conn, p, user)
     await invalidate_delivery_cache(p)
     return updated
@@ -655,6 +764,41 @@ async def retire_replaced_file(conn: Any, p: dict, previous: Any) -> None:
     )
 
 
+STALE_RETRY = "This file was already replaced by a newer document"
+
+
+async def replaced_before(conn: Any, p: dict, key: str, digest: str) -> bool:
+    """This file was accepted into this slot before (its fingerprint says so)."""
+    return bool(
+        await conn.fetchval(
+            """SELECT EXISTS(SELECT 1 FROM practice_delivery_fingerprints
+                             WHERE practice_id=$1 AND sha256=$2 AND service_code=$3 AND slot_key=$4)""",
+            p["id"],
+            digest,
+            p["code"],
+            key,
+        )
+    )
+
+
+async def completed_company(conn: Any, p: dict, key: str, view: dict, slot: dict) -> int | None:
+    """The company a file added to a completed practice must take.
+
+    A slot keeps its own company. An empty slot of a delivered practice joins the company the other
+    slots already name (the chooser is hidden once the case is completed).
+    """
+    previous = await previous_slot(conn, p, key)
+    own = previous["company_id"] if previous else None
+    if own is not None or slot["document_id"] is not None or not view["delivery_recorded"]:
+        return own
+    return await conn.fetchval(
+        """SELECT company_id FROM practice_delivery_slots WHERE practice_id=$1 AND service_code=$2
+           AND company_id IS NOT NULL ORDER BY slot_key LIMIT 1""",
+        p["id"],
+        p["code"],
+    )
+
+
 async def upload(
     pool: Any,
     practice_id: int,
@@ -667,16 +811,19 @@ async def upload(
 ) -> dict:
     async with pool.acquire() as conn:
         snapshot = await practice(conn, practice_id, user)
-        if not repair:
+        # A completed practice takes the completed route whichever endpoint the file came through.
+        completed = snapshot["status"] == "completed"
+        if not completed and not repair:
             require_open(snapshot)
         initial_view = await state(conn, snapshot, user)
         initial_slot = slot_for(initial_view, key)
-        if repair:
+        if repair or completed:
             if (
-                snapshot["status"] != "completed"
+                not completed
                 or initial_slot["waiver_reason"]
                 or not (
                     initial_view["legacy_proof"]
+                    or initial_view["delivery_recorded"]
                     or document_type(key, initial_slot["label"]) in _PERMIT_TYPES
                 )
             ):
@@ -684,8 +831,9 @@ async def upload(
                     409,
                     "Only a missing final permit on a completed practice can be repaired",
                 )
-            previous = await previous_slot(conn, snapshot, key)
-            original_company = previous["company_id"] if previous else None
+            original_company = await completed_company(
+                conn, snapshot, key, initial_view, initial_slot
+            )
             if request.company_id is not None and request.company_id != original_company:
                 raise HTTPException(409, "A repair cannot change the permit's company")
             request = request.model_copy(update={"company_id": original_company})
@@ -694,24 +842,55 @@ async def upload(
     base = f"case-delivery:{practice_id}:{request.company_id or 0}:{key}:{digest}"
     async with pool.acquire() as conn:
         await check_fingerprint(conn, snapshot, key, digest, record=False)
-        marker = await recoverable_marker(conn, snapshot, base)
-        if repair and not initial_slot["can_repair"]:
+        # A slot document made of this very upload keeps its own marker (a retry finds it, not an
+        # older document of the same lineage); otherwise the marker is the next free one.
+        marker = await conn.fetchval(
+            """SELECT intake_idempotency_key FROM documents WHERE id=$1
+               AND (intake_idempotency_key=$2 OR intake_idempotency_key LIKE $2 || ':%')""",
+            initial_slot["document_id"],
+            base,
+        ) or await recoverable_marker(conn, snapshot, base)
+        if initial_slot["document_id"] is not None:
+            # A file sent again into a slot that already holds a document (A3).
             replay = await staged_file(
                 conn,
                 snapshot,
                 request.company_id,
                 marker,
                 document_type(key, initial_slot["label"]),
-            )
-            if not replay:
-                replay = await existing_output(conn, snapshot, initial_slot, request)
-            if replay and replay["document_id"] == initial_slot["document_id"]:
-                return initial_view
-            raise HTTPException(409, "This delivered permit is already available")
-    await stage(pool, snapshot, initial_slot, user, request, marker, tasks, repair=repair)
+            ) or await existing_output(conn, snapshot, initial_slot, request)
+            same = bool(replay and replay["document_id"] == initial_slot["document_id"])
+            if same and await file_unchanged(conn, snapshot, key, initial_slot["document_id"]):
+                if completed:
+                    return initial_view
+            elif same:
+                # Its storage pointer moved since it was accepted: not "already there". The file lands
+                # as a new document under a fresh marker; the old document's MD5 no longer describes
+                # it, so it is cleared (the generic writer's content dedup would refuse the new file
+                # otherwise, crm_enhanced_documents._active_duplicate_document_id).
+                marker = f"{marker}:{initial_slot['document_id']}"
+                async with conn.transaction():
+                    await conn.fetchval(
+                        "SELECT id FROM practices WHERE id=$1 FOR UPDATE", practice_id
+                    )
+                    await conn.execute(
+                        "UPDATE documents SET content_hash=NULL WHERE id=$1",
+                        initial_slot["document_id"],
+                    )
+            elif await replaced_before(conn, snapshot, key, digest):
+                raise HTTPException(409, STALE_RETRY)
+            if completed and not initial_view["delivery_recorded"]:
+                raise HTTPException(409, "This delivered permit is already available")
+    await stage(pool, snapshot, initial_slot, user, request, marker, tasks, repair=completed)
     async with pool.acquire() as conn, conn.transaction():
         p = await practice(conn, practice_id, user, lock=True)
-        if not repair:
+        # The practice may have been completed since the snapshot: the file then takes that route.
+        on_completed = p["status"] == "completed"
+        if not on_completed:
+            if completed:
+                raise HTTPException(
+                    409, "Practice changed during upload. Review the current practice."
+                )
             require_open(p)
         view = await state(conn, p, user)
         slot = slot_for(view, key)
@@ -720,7 +899,6 @@ async def upload(
                 p[k] != snapshot[k]
                 for k in ("code", "client_id", "family_member_id", "assigned_to")
             )
-            or (repair and p["status"] != "completed")
             or initial_slot["label"] != slot["label"]
         ):
             raise HTTPException(409, "Practice changed during upload. Review the current practice.")
@@ -744,22 +922,49 @@ async def upload(
             request.company_id,
         ):
             raise HTTPException(409, "Practice documents already name a different company")
+        # A slot document made of this very upload (its marker names this digest) is not a NEWER one,
+        # even when its storage pointer has moved since.
+        own_lineage = slot["document_id"] is not None and bool(
+            await conn.fetchval(
+                "SELECT intake_idempotency_key LIKE $2 || '%' FROM documents WHERE id=$1",
+                slot["document_id"],
+                base,
+            )
+        )
+        replaced = (
+            slot["document_id"] is not None
+            and not own_lineage
+            and await replaced_before(conn, p, key, digest)
+        )
         await check_fingerprint(conn, p, key, digest, record=True)
-        # Replaying an upload into the slot that already owns the file is safe,
-        # even if the separate combined-permit action also referenced it.
+        # Replaying an upload into the slot that already owns the file is safe, but only while that
+        # document still is the file its acceptance recorded (P7a).
         if row["document_id"] == slot["document_id"]:
+            if not await file_unchanged(conn, p, key, slot["document_id"]):
+                raise HTTPException(409, "The stored file changed. Retry the upload.")
             return view
+        if replaced:
+            raise HTTPException(409, STALE_RETRY)
         if any(
             other["key"] != key and other["document_id"] == row["document_id"]
             for other in view["slots"]
         ):
             raise HTTPException(409, "This document already fills another slot")
-        if (repair and not slot["can_repair"]) or slot["document_id"] != initial_slot[
-            "document_id"
-        ]:
+        # On the completed route an empty slot is filled; a filled one is replaced only on a practice
+        # Final delivery completed, and only while it still holds the document the operator saw.
+        takes_file = (
+            not on_completed
+            or slot["can_repair"]
+            or (
+                view["delivery_recorded"]
+                and slot["document_id"] is not None
+                and not slot["waiver_reason"]
+            )
+        )
+        if not takes_file or slot["document_id"] != initial_slot["document_id"]:
             raise HTTPException(409, "Another operator changed this slot. Refresh and review.")
         previous = await previous_slot(conn, p, key)
-        if repair and ((previous and previous.get("company_id")) or None) != request.company_id:
+        if on_completed and await completed_company(conn, p, key, view, slot) != request.company_id:
             raise HTTPException(409, "Permit destination changed. Refresh and review.")
         await conn.execute(
             """INSERT INTO practice_delivery_slots(practice_id,service_code,slot_key,document_id,
@@ -777,21 +982,31 @@ async def upload(
             user["email"],
             issued_on,
         )
-        if repair:
+        if on_completed:
             await publish(conn, p, [key])
             if view["legacy_proof"]:
                 await earn_legacy_proof(conn, p, view, key, issued_on)
+            elif view["delivery_recorded"]:
+                await delivered_visa_clock(conn, p, view, key)
         else:
             await apply_document_milestone(conn, p, view, key, issued_on=issued_on)
         await retire_replaced_file(conn, p, previous)
         description = (
             "Final document uploaded"
-            if not repair
+            if not on_completed
             else "Final proof added after completion"
             if view["legacy_proof"]
+            else "Final document added after completion"
+            if view["delivery_recorded"]
             else "Missing final permit repaired"
         )
-        await audit(conn, practice_id, user["email"], f"{description}: {key}")
+        await audit(
+            conn,
+            practice_id,
+            user["email"],
+            f"{description}: {key}",
+            changes=await accepted_file(conn, key, row["document_id"]),
+        )
         updated = await state(conn, p, user)
     await invalidate_delivery_cache(p)
     return updated
@@ -813,6 +1028,19 @@ async def apply_document_milestone(
         )
     if view["bonus_trigger"] == "electronic_visa_issued":
         await record_visa_milestone(conn, practice_row, key)
+
+
+async def delivered_visa_clock(conn: Any, p: dict, view: dict, key: str) -> None:
+    """A document added to a delivered visa practice: the permit clock, never a bonus.
+
+    The e-visa key needs its issuance receipt (the clock starts from it); without one only the
+    permit slot, which refreshes the follow-up, has anything to do.
+    """
+    if view["bonus_trigger"] != "electronic_visa_issued":
+        return
+    if key == "electronic_visa" and view["bonus_event"] != "electronic_visa_issued":
+        return
+    await record_visa_milestone(conn, p, key)
 
 
 async def earn_legacy_proof(
@@ -931,9 +1159,18 @@ async def complete(pool: Any, practice_id: int, user: dict, tasks: BackgroundTas
             practice_id,
         )
         if not view["bonus_slot"] or slot_for(view, view["bonus_slot"])["waiver_reason"]:
-            await record_delivery_bonus(
-                conn, practice_id, p["code"], p["assigned_to"], "service_delivered"
-            )
+            # Earned when the proof first existed, by whoever held the practice then; never before
+            # November 2026 (older months were settled by the status-change rule).
+            earned_at, beneficiary = await first_proof_instant(conn, p)
+            if earned_at.astimezone(WITA).date() >= _LEGACY_FROM:
+                await record_delivery_bonus(
+                    conn,
+                    practice_id,
+                    p["code"],
+                    beneficiary,
+                    "service_delivered",
+                    earned_at=earned_at,
+                )
         await audit(
             conn, practice_id, user["email"], "Final documents delivered and practice completed"
         )
