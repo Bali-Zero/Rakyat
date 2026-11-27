@@ -415,9 +415,9 @@ async def test_a_keyed_brevo_read_timeout_stays_uncertain_and_is_not_requeued(
     state = _state()
     _wire(monkeypatch, state, _answers(200, endpoint_answer.model_dump()))
     _assert_uncertain(state, await _drain(state))
-    assert state["payloads"][0]["idempotency_key"] == str(
-        uuid5(welcome.WELCOME_IDEMPOTENCY_NAMESPACE, "welcome:1")
-    )
+    namespace = getattr(welcome, "WELCOME_IDEMPOTENCY_NAMESPACE", None)
+    assert namespace is not None, "no welcome idempotency namespace"
+    assert state["payloads"][0].get("idempotency_key") == str(uuid5(namespace, "welcome:1"))
 
 
 @pytest.mark.asyncio
@@ -429,9 +429,9 @@ async def test_each_welcome_attempt_uses_its_audit_row_for_a_stable_key(
 
     await _drain(state)
 
-    assert state["payloads"][0]["idempotency_key"] == str(
-        uuid5(welcome.WELCOME_IDEMPOTENCY_NAMESPACE, "welcome:1")
-    )
+    namespace = getattr(welcome, "WELCOME_IDEMPOTENCY_NAMESPACE", None)
+    assert namespace is not None, "no welcome idempotency namespace"
+    assert state["payloads"][0].get("idempotency_key") == str(uuid5(namespace, "welcome:1"))
 
 
 @pytest.mark.asyncio
