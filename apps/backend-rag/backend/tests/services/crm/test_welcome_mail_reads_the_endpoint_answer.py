@@ -79,12 +79,12 @@ async def _send(monkeypatch: pytest.MonkeyPatch, status: int, body: Any) -> dict
         pytest.param(UNCERTAIN, id="delivery uncertain"),
     ],
 )
-async def test_a_welcome_the_endpoint_did_not_send_is_recorded_as_failed(
+async def test_a_welcome_endpoint_failure_is_failed_only_when_delivery_is_certain(
     monkeypatch: pytest.MonkeyPatch, body: dict[str, Any]
 ) -> None:
     seen = await _send(monkeypatch, 200, body)
 
-    assert seen["audit"]["status"] == "failed"
+    assert seen["audit"]["status"] == ("escalated" if body.get("delivery_uncertain") else "failed")
     assert seen["audit"]["error_message"] == f"not delivered: {body['message']}"
     assert [page["email_type"] for page in seen["paged"]] == ["welcome"]
     assert seen["alert_rows"] == 0  # no "welcome sent" row for the client
@@ -107,7 +107,7 @@ async def test_a_welcome_refused_with_an_error_status_is_recorded_as_before(
 ) -> None:
     seen = await _send(monkeypatch, 500, {"detail": "boom"})
 
-    assert seen["audit"]["status"] == "failed"
+    assert seen["audit"]["status"] == "escalated"
     assert seen["audit"]["error_message"].startswith("status=500 body=")
     assert [page["email_type"] for page in seen["paged"]] == ["welcome"]
     assert seen["alert_rows"] == 0

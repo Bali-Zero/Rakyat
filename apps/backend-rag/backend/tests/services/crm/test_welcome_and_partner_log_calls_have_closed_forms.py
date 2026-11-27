@@ -603,6 +603,12 @@ TABLE: dict[str, list[tuple[str, str, str, tuple[str, ...]]]] = {
         ),
         (
             "_send_client_welcome_impl",
+            "logger.info",
+            "WelcomeEmail: welcome cap reached before send",
+            (),
+        ),
+        (
+            "_send_client_welcome_impl",
             "logger.warning",
             "WelcomeEmail: no audit row for client %s, nothing sent, queued again",
             ("id_fact(client_id)",),
@@ -919,7 +925,7 @@ def test_every_log_call_of_a_module_has_a_closed_form_and_pinned_bindings(module
 
 def test_the_table_reads_the_whole_of_every_module() -> None:
     assert {module: len(rows) for module, rows in TABLE.items()} == {
-        "welcome_email_service": 16,
+        "welcome_email_service": 17,
         "welcome_practice_service": 16,
         "welcome_whatsapp_service": 8,
         "partners.emails": 15,

@@ -259,6 +259,17 @@ _MAIL_FAILURES: list[tuple[str, Callable[[], Any], str]] = [
 ]
 
 
+def _audit_status(answer: Any) -> str:
+    if isinstance(answer, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)):
+        return "failed"
+    if not isinstance(answer, Exception) and answer.status_code in {400, 401, 403, 404, 422}:
+        return "failed"
+    if not isinstance(answer, Exception) and answer.status_code == 200:
+        if answer.json().get("delivery_uncertain") is not True:
+            return "failed"
+    return "escalated"
+
+
 @pytest.mark.asyncio
 async def test_a_sent_welcome_mail_names_the_client_by_id(
     audit: SimpleNamespace, caplog: pytest.LogCaptureFixture
@@ -289,7 +300,7 @@ async def test_a_welcome_mail_that_is_not_sent_logs_a_reason_written_in_the_sour
     with caplog.at_level(logging.DEBUG):
         await welcome.process_pending_welcome_emails(_Db())
 
-    assert audit.recorded.await_args.kwargs["status"] == "failed"
+    assert audit.recorded.await_args.kwargs["status"] == _audit_status(answer())
     _line(_read(caplog), f"WelcomeEmail: send failed for client 7: {reason}")
 
 
@@ -378,7 +389,7 @@ async def test_the_audit_row_of_a_failed_welcome_keeps_its_diagnostic_unchanged(
     }
     assert audit.recorded.await_args.args == (db, 11)
     assert audit.recorded.await_args.kwargs == {
-        "status": "failed",
+        "status": _audit_status(answer()),
         "provider": "brevo",
         "error_message": _what_main_stores(answer()),
     }

@@ -23,11 +23,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
+from uuid import UUID, uuid5
 
 import httpx
 import pytest
 
 import backend.services.crm.welcome.welcome_email_service as welcome
+from backend.app.modules.notifications import router as notifications_router
 
 CLIENT = {
     "id": 7,
@@ -55,6 +57,22 @@ class FakeConn:
         self.s = state
 
     async def fetch(self, sql: str, *args: Any) -> list[dict[str, Any]]:
+        if "FROM email_send_log" in sql and "WHERE status = 'failed'" in sql:
+            return [
+                {
+                    "id": row["id"],
+                    "email_type": "welcome",
+                    "to_email": "client@example.test",
+                    "subject": "Welcome",
+                    "practice_id": None,
+                    "client_id": row["client_id"],
+                    "attempt_number": 1,
+                    "error_message": "delivery uncertain",
+                    "created_at": datetime.now(timezone.utc),
+                }
+                for row in self.s["log"]
+                if row["status"] == "failed"
+            ]
         assert "FROM welcome_email_queue" in sql
         # Every queued row is due: the sweeps re-run the drain and must see the row again.
         return [dict(r) for r in self.s["queue"]]
@@ -85,6 +103,7 @@ class FakeConn:
         if "FROM email_send_log" in sql:
             # The cap: count the rows by the statuses THIS query names, not by a list kept here.
             assert "'welcome'" in sql
+            self.s["events"].append("cap")
             listed = re.search(r"status IN \(([^)]*)\)", sql)
             assert listed, sql
             names = set(re.findall(r"'([a-z_]+)'", listed.group(1)))
@@ -100,6 +119,11 @@ class FakeConn:
         raise AssertionError(sql)
 
     async def execute(self, sql: str, *args: Any) -> None:
+        if "UPDATE email_send_log" in sql:
+            for row in self.s["log"]:
+                if row["id"] in args[0]:
+                    row["status"] = "escalated"
+            return
         if "INSERT INTO welcome_email_queue" in sql:
             assert "ON CONFLICT (client_id) DO NOTHING" in sql
             if all(r["client_id"] != args[0] for r in self.s["queue"]):
@@ -134,6 +158,8 @@ def _state(**over: Any) -> dict[str, Any]:
         "audit_lost": False,  # log_email_attempt returns None, as when its insert fails
         "log": [],  # email_send_log rows
         "posts": 0,
+        "payloads": [],
+        "events": [],
         "paged": [],
         "raised": None,
     }
@@ -157,11 +183,14 @@ def _wire(monkeypatch: pytest.MonkeyPatch, state: dict[str, Any], post: Any) -> 
 
     async def counted_post(*args: Any, **kwargs: Any) -> Any:
         state["posts"] += 1
+        state["payloads"].append(kwargs["json"])
+        state["events"].append("post")
         return await post()
 
     async def log_attempt(pool: Any, **kw: Any) -> int | None:
         if state["audit_lost"]:
             return None
+        state["events"].append("audit")
         row = {"id": len(state["log"]) + 1, "status": "sending", **kw}
         state["log"].append(row)
         return row["id"]
@@ -170,7 +199,7 @@ def _wire(monkeypatch: pytest.MonkeyPatch, state: dict[str, Any], post: Any) -> 
         # The audit's own contract: no row id, no-op; a status it does not know is a failure.
         if row_id is None:
             return
-        if status not in {"sent", "failed", "skipped_idempotent"}:
+        if status not in {"sent", "failed", "escalated", "skipped_idempotent"}:
             status = "failed"
         for row in state["log"]:
             if row["id"] == row_id:
@@ -224,7 +253,7 @@ def _assert_uncertain(state: dict[str, Any], stats: dict[str, int] | None) -> No
     assert stats == {"processed": 1, "sent": 0, "skipped": 0, "failed": 1}
     assert state["posts"] == 1
     assert not _in_queue(state), "an uncertain send was put back in the queue: a possible duplicate"
-    assert [r["status"] for r in state["log"]] == ["failed"]  # audited
+    assert [r["status"] for r in state["log"]] == ["escalated"]  # audited and paged
     assert [p["email_type"] for p in state["paged"]] == ["welcome"]  # one page, no more
     assert state["alerts"] == []
 
@@ -358,6 +387,51 @@ async def test_a_200_that_says_delivery_uncertain_is_uncertain(
     _wire(monkeypatch, state, _answers(200, UNCERTAIN_BODY))
 
     _assert_uncertain(state, await _drain(state))
+
+
+@pytest.mark.asyncio
+async def test_a_keyed_brevo_read_timeout_stays_uncertain_and_is_not_requeued(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real endpoint preserves a lost provider answer for the welcome sender."""
+    key = UUID("12345678-1234-5678-1234-567812345678")
+    client = MagicMock()
+    client.post = AsyncMock(side_effect=httpx.ReadTimeout("lost answer", request=REQUEST))
+    monkeypatch.setenv("SENDGRID_API_KEY", "xkeysib-synthetic-test-key")
+    monkeypatch.setattr(notifications_router, "get_email_client", AsyncMock(return_value=client))
+
+    endpoint_answer = await notifications_router.send_direct_email(
+        notifications_router.SendEmailRequest(
+            to="client@example.test",
+            subject="Welcome",
+            body="Synthetic welcome",
+            idempotency_key=key,
+        )
+    )
+
+    assert endpoint_answer.success is False
+    assert endpoint_answer.delivery_uncertain is True
+
+    state = _state()
+    _wire(monkeypatch, state, _answers(200, endpoint_answer.model_dump()))
+    _assert_uncertain(state, await _drain(state))
+    assert state["payloads"][0]["idempotency_key"] == str(
+        uuid5(welcome.WELCOME_IDEMPOTENCY_NAMESPACE, "welcome:1")
+    )
+
+
+@pytest.mark.asyncio
+async def test_each_welcome_attempt_uses_its_audit_row_for_a_stable_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _state()
+    _wire(monkeypatch, state, _answers(422))
+
+    await _drain(state)
+
+    assert state["payloads"][0]["idempotency_key"] == str(
+        uuid5(welcome.WELCOME_IDEMPOTENCY_NAMESPACE, "welcome:1")
+    )
 
 
 @pytest.mark.asyncio
@@ -521,6 +595,65 @@ def _seed(state: dict[str, Any], *statuses: str) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "prior", [("failed", "failed", "failed"), ("failed", "escalated", "sending")]
+)
+async def test_the_cap_stops_before_a_new_audit_or_post(
+    monkeypatch: pytest.MonkeyPatch, prior: tuple[str, ...], caplog: pytest.LogCaptureFixture
+) -> None:
+    state = _state()
+    _seed(state, *prior)
+    _wire(monkeypatch, state, _answers(422))
+
+    with caplog.at_level("INFO", logger=welcome.logger.name):
+        stats = await _drain(state)
+
+    assert stats == {"processed": 1, "sent": 0, "skipped": 0, "failed": 1}
+    assert state["posts"] == 0
+    assert len(state["log"]) == 3
+    assert not _in_queue(state)
+    assert [r.getMessage() for r in caplog.records if "cap reached" in r.getMessage()] == [
+        "WelcomeEmail: welcome cap reached before send"
+    ]
+    assert "example.test" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_two_prior_attempts_check_the_cap_before_one_new_post(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = _state()
+    _seed(state, "failed", "sending")
+    _wire(monkeypatch, state, _answers(422))
+
+    await _drain(state)
+
+    assert state["posts"] == 1
+    assert state["events"][:3] == ["cap", "audit", "post"]
+
+
+@pytest.mark.asyncio
+async def test_an_uncertain_attempt_is_not_selected_for_a_second_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import backend.services.notifications.email_health_monitor as health_monitor
+    from backend.services.notifications.email_health_monitor import EmailHealthMonitor
+
+    state = _state()
+    _wire(monkeypatch, state, _answers(200, UNCERTAIN_BODY))
+    monitor_page = MagicMock()
+    monkeypatch.setattr(health_monitor, "_post_telegram", monitor_page)
+
+    _assert_uncertain(state, await _drain(state))
+    stats = await EmailHealthMonitor(_pool(state)).escalate_unrecoverable()
+
+    assert [row["status"] for row in state["log"]] == ["escalated"]
+    assert len(state["paged"]) == 1
+    assert stats == {"escalated": 0}
+    monitor_page.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_the_cap_is_three_definite_failures_then_the_row_stays_out(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -561,7 +694,7 @@ async def test_an_uncertain_attempt_counts_toward_the_cap(monkeypatch: pytest.Mo
     # Were the uncertain one not counted, a fourth POST would follow.
     assert state["raised"] is None, repr(state["raised"])
     assert state["posts"] == 3
-    assert [r["status"] for r in state["log"]] == ["failed"] * 3
+    assert [r["status"] for r in state["log"]] == ["escalated", "failed", "failed"]
     assert not _in_queue(state)
 
 

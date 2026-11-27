@@ -26,6 +26,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
+from uuid import UUID, uuid5
 
 import httpx
 from httpx import ConnectError, ConnectTimeout, PoolTimeout
@@ -65,6 +66,7 @@ WELCOME_DELAY_MINUTES = 30
 # times in all (counted in email_send_log), and ONLY when it surely did not go out.
 WELCOME_RETRY_DELAY = timedelta(hours=1)
 WELCOME_MAX_FAILED_ATTEMPTS = 3
+WELCOME_IDEMPOTENCY_NAMESPACE = UUID("f6b0ee72-2b52-5c2c-b0df-6c4dfb69f8ef")
 
 # Statuses by which the endpoint validated the request and refused it: nothing was sent.
 _REFUSED_STATUSES = frozenset({400, 401, 403, 404, 422})
@@ -80,6 +82,7 @@ class WelcomeOutcome(enum.Enum):
     FAILED = "failed"  # PROVED not delivered: the only outcome that is requeued
     UNCERTAIN = "uncertain"  # no proof either way: the mail may have gone out, never requeued
     NOT_ATTEMPTED = "not_attempted"  # no audit row could be written, nothing was posted: requeued
+    CAPPED = "capped"  # previous non-sent attempts exhausted the welcome budget
 
 
 # ─── EMAIL API (Brevo via internal endpoint) ─────────────
@@ -205,9 +208,8 @@ async def _requeue_welcome(client_id: int, db_pool: asyncpg.Pool) -> None:
     The claim in the drain loop deleted the row before the send, so without this such a
     welcome was gone for good. Attempts are counted in the audit trail (email_send_log): every
     POST has a row there (no audit row, no POST), and a row that is not 'sent' is an attempt
-    that did not end well: 'failed' (which is also how an UNCERTAIN send is recorded),
-    'escalated' (the health monitor's turn of a failed row) or a 'sending' row whose result
-    was never written.
+    that did not end well: 'failed', 'escalated' (including UNCERTAIN sends already paged by
+    this service) or a 'sending' row whose result was never written.
     """
     try:
         async with db_pool.acquire() as conn:
@@ -344,6 +346,19 @@ async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> We
             logger.warning("WelcomeEmail: brochure unavailable for client %s", id_fact(client_id))
 
     # Audit row — written before network call so a crash mid-send is visible.
+    async with db_pool.acquire() as conn:
+        attempts = await conn.fetchval(
+            """
+            SELECT COUNT(*) FROM email_send_log
+            WHERE email_type = 'welcome' AND client_id = $1
+              AND status IN ('failed', 'escalated', 'sending')
+            """,
+            client_id,
+        )
+    if (attempts or 0) >= WELCOME_MAX_FAILED_ATTEMPTS:
+        logger.info("WelcomeEmail: welcome cap reached before send")
+        return WelcomeOutcome.CAPPED
+
     audit_row_id = await log_email_attempt(
         db_pool,
         email_type="welcome",
@@ -360,6 +375,10 @@ async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> We
             id_fact(client_id),
         )
         return WelcomeOutcome.NOT_ATTEMPTED
+
+    payload["idempotency_key"] = str(
+        uuid5(WELCOME_IDEMPOTENCY_NAMESPACE, f"welcome:{audit_row_id}")
+    )
 
     # Send — wrapped so an exception is captured into the audit trail
     # instead of propagating up and being counted as a permanent failure
@@ -452,12 +471,10 @@ async def _send_client_welcome_impl(client_id: int, db_pool: asyncpg.Pool) -> We
         id_fact(client_id),
         log_reason,
     )
-    # The audit knows no 'uncertain' status: an uncertain send is recorded as 'failed', and
-    # the cap in _requeue_welcome counts it as such.
     await record_email_result(
         db_pool,
         audit_row_id,
-        status="failed",
+        status="escalated" if outcome is WelcomeOutcome.UNCERTAIN else "failed",
         provider="brevo",
         error_message=send_error,
     )
