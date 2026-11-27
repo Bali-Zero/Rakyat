@@ -3,8 +3,8 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
- * DK-16: three ranking KITAS articles did not link to the service page that
- * sells it. /services/kitas does not exist yet, so each English article now
+ * DK-16: ranking KITAS articles did not link to the service page that sells
+ * it. /services/kitas does not exist yet, so each English article now
  * carries one InfoCard that links to /services/visa, with no price and no
  * figure in the card. Same pattern as articles-services-company-cta.
  *
@@ -15,6 +15,7 @@ const ARTICLES = [
   "immigration/kitas-extension-renewal-guide.mdx",
   "immigration/kitas-renewal-denied-common-reasons.mdx",
   "immigration/indonesia-visa-timeline-comparison.mdx",
+  "immigration/e25b-director-kitas-guide.mdx",
 ];
 const CARD = /<InfoCard\b[^>]*>[\s\S]*?<\/InfoCard>/g;
 const LINK = "](/services/visa)";
