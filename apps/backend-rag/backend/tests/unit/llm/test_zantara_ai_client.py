@@ -1,361 +1,403 @@
-"""
-Tests for ZantaraAIClient
-Target: 100% coverage
+"""Tests for ZantaraAIClient on the Claude Console lane.
+
+Nothing here reaches a model or the network: ``complete_async`` and the seat
+lookup are stood in. Fixtures are synthetic markers, never client data.
 """
 
-import sys
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from __future__ import annotations
+
+import logging
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-# Add backend to path
-backend_path = Path(__file__).parent.parent.parent.parent.parent
-if str(backend_path) not in sys.path:
-    sys.path.insert(0, str(backend_path))
+from backend.llm.claude_oauth_client import (
+    ClaudeOAuthError,
+    ClaudeOAuthNotAvailable,
+    ClaudeOAuthResponse,
+)
+from backend.llm.fallback_messages import get_fallback_message
+from backend.llm.zantara_ai_client import (
+    _MAX_PROMPT_BYTES,
+    ZantaraAIClient,
+    _build_prompt,
+    _is_terminal_auth_or_quota_error,
+    _resolve_model,
+)
 
-from backend.llm.zantara_ai_client import ZantaraAIClient
-
-
-@pytest.fixture
-def mock_genai_available():
-    with patch("backend.llm.zantara_ai_client.GENAI_AVAILABLE", True):
-        yield
-
-
-@pytest.fixture
-def mock_genai_client():
-    with patch("backend.llm.zantara_ai_client.GenAIClient") as MockClient:
-        instance = MockClient.return_value
-        instance.is_available = True
-        yield MockClient
+_MODULE = "backend.llm.zantara_ai_client"
+_SENTINEL = "SYNTHETIC_CLIENT_SENTINEL"
 
 
-# ============================================================================
-# TESTS: Initialization
-# ============================================================================
-def test_init_with_api_key(mock_genai_available, mock_genai_client):
-    client = ZantaraAIClient(api_key="test_key")
-    assert client.api_key == "test_key"
-    assert client.mock_mode is False
-    assert client._genai_client is not None
+def _resp(text: str) -> ClaudeOAuthResponse:
+    return ClaudeOAuthResponse(text=text, token_label="console_1", elapsed_s=0.1, attempts=1)
 
 
-def test_init_with_service_account(mock_genai_available, mock_genai_client):
-    with patch("os.environ.get", return_value="path/to/creds.json"):
-        client = ZantaraAIClient(api_key=None)
-        assert client.mock_mode is False
-
-
-def test_init_mock_mode_no_creds(mock_genai_available):
-    with (
-        patch("backend.app.core.config.settings.environment", "development"),
-        patch("backend.app.core.config.settings.google_api_key", None),
-        patch("backend.app.core.config.settings.google_credentials_json", None),
-        patch("os.environ.get", return_value=None),
-    ):
-        client = ZantaraAIClient(api_key=None)
-        assert client.mock_mode is True
-        assert client._genai_client is None
-
-
-def test_init_production_no_creds(mock_genai_available):
-    with (
-        patch("backend.app.core.config.settings.environment", "production"),
-        patch("backend.app.core.config.settings.google_api_key", None),
-        patch("backend.app.core.config.settings.google_credentials_json", None),
-        patch("os.environ.get", return_value=None),
-        pytest.raises(ValueError, match="GOOGLE_API_KEY or GOOGLE_CREDENTIALS_JSON is required"),
-    ):
-        ZantaraAIClient(api_key=None)
-
-
-def test_init_genai_client_fail(mock_genai_available, mock_genai_client):
-    # Simulate GenAI client failing to initialize
-    mock_genai_client.side_effect = Exception("Init failed")
-    with patch("backend.app.core.config.settings.environment", "development"):
-        client = ZantaraAIClient(api_key="test")
-        assert client.mock_mode is True
-
-
-def test_init_genai_client_fail_production(mock_genai_available, mock_genai_client):
-    mock_genai_client.side_effect = Exception("Init failed")
-    with patch("backend.app.core.config.settings.environment", "production"):
-        with pytest.raises(ValueError, match="Failed to configure Gemini in production"):
-            ZantaraAIClient(api_key="test")
-
-
-# ============================================================================
-# TESTS: Helper Methods
-# ============================================================================
-def test_get_model_info(mock_genai_available, mock_genai_client):
-    client = ZantaraAIClient(api_key="test")
-    info = client.get_model_info()
-    assert info["model"] == "gemini-3.5-flash"
-    assert info["provider"] == "google_native"
-
-    client.mock_mode = True
-    info = client.get_model_info()
-    assert info["provider"] == "mock"
-
-
-def test_validate_inputs(mock_genai_available, mock_genai_client):
-    client = ZantaraAIClient(api_key="test")
-
-    # Valid
-    client._validate_inputs(
-        max_tokens=100,
-        temperature=0.5,
-        messages=[{"role": "user", "content": "hi"}],
+def _seat_error(tail: str) -> ClaudeOAuthError:
+    return ClaudeOAuthError(
+        f"Claude Console seats failed after 3 attempt(s). Last error class: {tail}"
     )
 
-    # Invalid max_tokens
-    with pytest.raises(ValueError):
-        client._validate_inputs(max_tokens=0)
-    with pytest.raises(ValueError):
-        client._validate_inputs(max_tokens=10000)
 
-    # Invalid temperature
-    with pytest.raises(ValueError):
-        client._validate_inputs(temperature=-1)
-    with pytest.raises(ValueError):
-        client._validate_inputs(temperature=2.1)
-
-    # Invalid messages
-    with pytest.raises(ValueError):
-        client._validate_inputs(messages=[])  # Empty
-    with pytest.raises(ValueError):
-        client._validate_inputs(messages="not a list")
-    with pytest.raises(ValueError):
-        client._validate_inputs(messages=[{"role": "user"}])  # Missing content
+@pytest.fixture(autouse=True)
+def _no_model_env(monkeypatch):
+    monkeypatch.delenv("CHANNEL_MODEL_NAME", raising=False)
 
 
-def test_prepare_gemini_messages(mock_genai_available, mock_genai_client):
-    client = ZantaraAIClient(api_key="test")
-    messages = [
-        {"role": "system", "content": "sys"},  # Should be skipped
-        {"role": "user", "content": "hi"},
-        {"role": "assistant", "content": "hello"},
-        {"role": "user", "content": "bye"},
-    ]
-
-    history, last_msg = client._prepare_gemini_messages(messages)
-
-    assert len(history) == 2  # user:hi, model:hello
-    assert history[0]["role"] == "user"
-    assert history[0]["parts"] == ["hi"]
-    assert history[1]["role"] == "model"
-    assert history[1]["parts"] == ["hello"]
-    assert last_msg == "bye"
+@pytest.fixture
+def lane():
+    """A Console seat is configured and the completion call is stood in."""
+    with (
+        patch(f"{_MODULE}.collect_seats", return_value=[object()]),
+        patch(f"{_MODULE}.complete_async", new=AsyncMock(return_value=_resp("answer"))) as call,
+        patch(f"{_MODULE}.asyncio.sleep", new=AsyncMock()),
+    ):
+        yield call
 
 
-@pytest.mark.skip(reason="_extract_response_text method removed/redesigned in ZantaraAIClient")
-def test_extract_response_text(mock_genai_available, mock_genai_client):
-    client = ZantaraAIClient(api_key="test")
-
-    # Standard response
-    mock_resp = MagicMock()
-    mock_resp.text = "Response text"
-    mock_resp.candidates = [MagicMock()]
-    assert client._extract_response_text(mock_resp) == "Response text"
-
-    # Safety blocked but content available
-    mock_candidate = MagicMock()
-    mock_rating = MagicMock()
-    mock_rating.probability.name = "HIGH"
-    mock_candidate.safety_ratings = [mock_rating]
-    mock_candidate.content.parts = [MagicMock(text="Unsafe text")]
-    mock_resp.candidates = [mock_candidate]
-
-    assert client._extract_response_text(mock_resp) == "Unsafe text"
-
-    # Safety blocked, no content
-    mock_candidate.content.parts = []
-    with pytest.raises(ValueError, match="Response blocked"):
-        client._extract_response_text(mock_resp)
+async def _collect(client: ZantaraAIClient, **kwargs) -> str:
+    chunks = []
+    async for chunk in client.stream(**kwargs):
+        chunks.append(chunk)
+    return "".join(chunks)
 
 
-def test_estimate_tokens(mock_genai_available, mock_genai_client):
-    client = ZantaraAIClient(api_key="test")
-    client.token_estimator = MagicMock()
-    client.token_estimator.estimate_messages_tokens.return_value = 10
-    client.token_estimator.estimate_tokens.return_value = 20
-
-    tokens = client._estimate_tokens([], "response")
-    assert tokens["input"] == 10
-    assert tokens["output"] == 20
+def _words(text: str) -> str:
+    return "".join(word + " " for word in text.split())
 
 
 # ============================================================================
-# TESTS: chat_async
+# Initialization
+# ============================================================================
+def test_init_with_a_seat_uses_the_console_lane(lane):
+    client = ZantaraAIClient(api_key="ignored-legacy-argument")
+    assert client.mock_mode is False
+    assert client.get_model_info()["provider"] == "claude_console"
+    assert client.is_available() is True
+
+
+def test_init_without_a_seat_in_development_is_mock_mode():
+    with (
+        patch(f"{_MODULE}.collect_seats", return_value=[]),
+        patch("backend.app.core.config.settings.environment", "development"),
+    ):
+        client = ZantaraAIClient()
+    assert client.mock_mode is True
+    assert client.get_model_info()["provider"] == "mock"
+    assert client.is_available() is True
+
+
+def test_init_without_a_seat_in_production_fails_closed():
+    with (
+        patch(f"{_MODULE}.collect_seats", return_value=[]),
+        patch("backend.app.core.config.settings.environment", "production"),
+        pytest.raises(ValueError, match="No Claude Console seats configured in production"),
+    ):
+        ZantaraAIClient()
+
+
+def test_a_claude_model_argument_is_honoured(lane):
+    assert ZantaraAIClient(model="claude-haiku-5-5").model == "claude-haiku-5-5"
+
+
+def test_legacy_non_claude_slugs_are_ignored(lane, monkeypatch):
+    legacy = "gemini-" + "2.5-flash"
+    default = _resolve_model(None)
+    assert default.startswith("claude-")
+    assert ZantaraAIClient(model=legacy).model == default
+    monkeypatch.setenv("CHANNEL_MODEL_NAME", legacy)
+    assert _resolve_model(None) == default
+    monkeypatch.setenv("CHANNEL_MODEL_NAME", "claude-sonnet-5-5")
+    assert _resolve_model(None) == "claude-sonnet-5-5"
+
+
+# ============================================================================
+# Helpers
+# ============================================================================
+def test_validate_inputs(lane):
+    client = ZantaraAIClient()
+    client._validate_inputs(
+        max_tokens=100, temperature=0.5, messages=[{"role": "user", "content": "hi"}]
+    )
+    for bad in (
+        {"max_tokens": 0},
+        {"max_tokens": 10000},
+        {"temperature": -1},
+        {"temperature": 2.1},
+    ):
+        with pytest.raises(ValueError):
+            client._validate_inputs(**bad)
+    for messages in ([], "not a list", [{"role": "user"}], ["x"], [{"role": "user", "content": 5}]):
+        with pytest.raises(ValueError):
+            client._validate_inputs(messages=messages)
+
+
+def test_estimate_tokens(lane):
+    client = ZantaraAIClient()
+    client.token_estimator = type(
+        "E", (), {"estimate_messages_tokens": lambda *_: 10, "estimate_tokens": lambda *_: 20}
+    )()
+    assert client._estimate_tokens([], "response") == {"input": 10, "output": 20}
+
+
+@pytest.mark.parametrize(
+    ("tail", "terminal"),
+    [
+        ("console_1: authentication_error", True),
+        ("console_1: model_access_denied", True),
+        ("console_1: quota_exhausted", True),
+        ("console_1: rate limited", False),
+        ("console_1: cli_exit_1", False),
+    ],
+)
+def test_terminal_classification_reads_the_structured_tail(tail, terminal):
+    assert _is_terminal_auth_or_quota_error(_seat_error(tail)) is terminal
+    assert _is_terminal_auth_or_quota_error(RuntimeError("quota authentication")) is False
+
+
+# ============================================================================
+# _build_prompt
+# ============================================================================
+def test_prompt_orders_system_history_then_the_last_message_verbatim():
+    prompt = _build_prompt(
+        "sys",
+        [
+            {"role": "system", "content": "skipped"},
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "reply"},
+            {"role": "user", "content": "question\n\n[note] keep"},
+        ],
+    )
+    assert prompt.startswith("<system_instructions>\nsys\n</system_instructions>")
+    assert "User: first\nAssistant: reply" in prompt
+    assert "skipped" not in prompt
+    assert prompt.endswith("question\n\n[note] keep")
+
+
+def test_oldest_history_is_trimmed_first_and_the_message_is_kept():
+    message = "question\n\n[note] keep"
+    prompt = _build_prompt(
+        "sys",
+        [
+            {"role": "user", "content": "h" * 125_000},
+            {"role": "assistant", "content": "recent"},
+            {"role": "user", "content": message},
+        ],
+    )
+    assert prompt.endswith(message)
+    assert "h" * 1000 not in prompt
+    assert len(prompt.encode("utf-8")) <= _MAX_PROMPT_BYTES
+
+
+@pytest.mark.parametrize(
+    ("messages", "system", "reason"),
+    [
+        ([{"role": "user", "content": "x" * 140_000}], "", "exceeds"),
+        ([{"role": "user", "content": "hello\x00world"}], "", "NUL"),
+        ([{"role": "user", "content": "bad\ud800text"}], "", "surrogates"),
+        ([{"role": "user", "content": "   "}], "", "non-empty"),
+        ([{"role": "system", "content": "only system"}], "sys", "non-system"),
+    ],
+    ids=["oversize", "nul", "surrogate", "blank", "system_only"],
+)
+def test_a_prompt_the_cli_can_never_accept_is_refused(messages, system, reason):
+    with pytest.raises(ValueError, match=reason):
+        _build_prompt(system, messages)
+
+
+# ============================================================================
+# chat_async
 # ============================================================================
 @pytest.mark.asyncio
-async def test_chat_async_success(mock_genai_available, mock_genai_client):
-    client = ZantaraAIClient(api_key="test")
-    mock_chat = AsyncMock()
-    mock_chat.send_message.return_value = {"text": "Response"}
-    client._genai_client.create_chat.return_value = mock_chat
+async def test_chat_async_runs_on_the_console_lane(lane):
+    client = ZantaraAIClient()
 
     result = await client.chat_async(messages=[{"role": "user", "content": "hi"}])
-    assert result["text"] == "Response"
-    assert result["provider"] == "google_genai"
+
+    assert result["text"] == "answer"
+    assert result["provider"] == "claude_console"
+    assert result["cost"] == 0.0
+    lane.assert_awaited_once()
+    assert lane.await_args.kwargs["endpoint"] == "zantara_ai.chat"
+    assert lane.await_args.kwargs["timeout_s"] == 60.0
+    assert lane.await_args.kwargs["total_timeout_s"] == 120.0
+    assert lane.await_args.kwargs["model"] == client.model
 
 
 @pytest.mark.asyncio
-async def test_chat_async_mock_mode(mock_genai_available):
-    client = ZantaraAIClient(api_key="test")
-    client.mock_mode = True
-
-    result = await client.chat_async(messages=[{"role": "user", "content": "hi"}])
+async def test_chat_async_mock_mode():
+    with (
+        patch(f"{_MODULE}.collect_seats", return_value=[]),
+        patch("backend.app.core.config.settings.environment", "development"),
+    ):
+        client = ZantaraAIClient()
+        result = await client.chat_async(messages=[{"role": "user", "content": "hi"}])
     assert result["provider"] == "mock"
     assert "MOCK response" in result["text"]
 
 
 @pytest.mark.asyncio
-async def test_chat_async_unavailable(mock_genai_available, mock_genai_client):
-    client = ZantaraAIClient(api_key="test")
-    client._genai_client = None
+async def test_chat_async_without_a_seat_raises_not_available(lane):
+    client = ZantaraAIClient()
+    with patch(f"{_MODULE}.collect_seats", return_value=[]):
+        with pytest.raises(ClaudeOAuthNotAvailable):
+            await client.chat_async(messages=[{"role": "user", "content": "hi"}])
+    lane.assert_not_awaited()
 
-    with pytest.raises(ValueError, match="Gemini client library is not available"):
+
+@pytest.mark.asyncio
+async def test_chat_async_propagates_a_seat_failure(lane):
+    client = ZantaraAIClient()
+    lane.side_effect = _seat_error("console_1: rate limited")
+    with pytest.raises(ClaudeOAuthError):
         await client.chat_async(messages=[{"role": "user", "content": "hi"}])
 
 
 @pytest.mark.asyncio
-async def test_chat_async_connection_error(mock_genai_available, mock_genai_client):
-    client = ZantaraAIClient(api_key="test")
-    client._genai_client.create_chat.side_effect = ConnectionError("Conn Fail")
-
-    with pytest.raises(ConnectionError):
-        await client.chat_async(messages=[{"role": "user", "content": "hi"}])
+@pytest.mark.parametrize(
+    "bad",
+    ["hello\x00world", "x" * 140_000, "bad\ud800text", "   "],
+    ids=["nul", "big", "sur", "blank"],
+)
+async def test_chat_async_refuses_an_invalid_prompt_before_the_cli(lane, bad):
+    client = ZantaraAIClient()
+    with pytest.raises(ValueError):
+        await client.chat_async(messages=[{"role": "user", "content": bad}])
+    lane.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_chat_async_api_key_leak(mock_genai_available, mock_genai_client):
-    client = ZantaraAIClient(api_key="test")
-    client._genai_client.create_chat.side_effect = Exception("403 Forbidden: API key leaked")
+async def test_chat_async_logs_never_carry_the_prompt_or_the_answer(lane, caplog):
+    caplog.set_level(logging.DEBUG)
+    client = ZantaraAIClient()
+    lane.return_value = _resp(f"{_SENTINEL} answer")
 
-    with pytest.raises(ValueError, match="API key was reported as leaked"):
-        await client.chat_async(messages=[{"role": "user", "content": "hi"}])
+    await client.chat_async(messages=[{"role": "user", "content": f"{_SENTINEL} question"}])
+    lane.side_effect = _seat_error("console_1: rate limited")
+    with pytest.raises(ClaudeOAuthError):
+        await client.chat_async(messages=[{"role": "user", "content": f"{_SENTINEL} question"}])
+
+    assert _SENTINEL not in caplog.text
 
 
 # ============================================================================
-# TESTS: stream
+# stream
 # ============================================================================
 @pytest.mark.asyncio
-async def test_stream_success(mock_genai_available, mock_genai_client):
-    client = ZantaraAIClient(api_key="test")
-
-    # Mock chat session and streaming
-    mock_chat = MagicMock()
-
-    # Mock send_message_stream as async generator
-    async def mock_stream(*args, **kwargs):
-        yield "Hello"
-        yield " World"
-
-    mock_chat.send_message_stream.side_effect = mock_stream
-    client._genai_client.create_chat.return_value = mock_chat
-
-    chunks = []
-    async for chunk in client.stream(message="hi", user_id="user1"):
-        chunks.append(chunk)
-
-    assert "".join(chunks) == "Hello World"
+async def test_stream_yields_the_answer(lane):
+    client = ZantaraAIClient()
+    text = await _collect(client, message="hi", user_id="user1")
+    assert text == "answer"
+    assert lane.await_args.kwargs["endpoint"] == "zantara_ai.chat"
 
 
 @pytest.mark.asyncio
-async def test_stream_mock_mode(mock_genai_available):
-    client = ZantaraAIClient(api_key="test")
-    client.mock_mode = True
-
-    chunks = []
-    async for chunk in client.stream(message="hi", user_id="user1"):
-        chunks.append(chunk)
-
-    assert len(chunks) > 0
-    assert "MOCK" in "".join(chunks)
-
-
-@pytest.mark.asyncio
-async def test_stream_unavailable(mock_genai_available, mock_genai_client):
-    client = ZantaraAIClient(api_key="test")
-    client._genai_client = None
-
-    chunks = []
-    async for chunk in client.stream(message="hi", user_id="user1"):
-        chunks.append(chunk)
-
-    # Should yield fallback message
-    assert len(chunks) > 0
-
-
-@pytest.mark.asyncio
-async def test_stream_no_content(mock_genai_available, mock_genai_client):
-    client = ZantaraAIClient(api_key="test")
-
-    mock_chat = MagicMock()
-
-    async def empty_stream(*args, **kwargs):
-        if False:
-            yield "nothing"
-
-    mock_chat.send_message_stream.side_effect = empty_stream
-    client._genai_client.create_chat.return_value = mock_chat
-
-    # Should retry then fail then fallback
-    chunks = []
-    async for chunk in client.stream(message="hi", user_id="user1"):
-        chunks.append(chunk)
-
-    assert len(chunks) > 0  # Fallback message
-
-
-@pytest.mark.asyncio
-async def test_stream_api_key_leak(mock_genai_available, mock_genai_client):
-    client = ZantaraAIClient(api_key="test")
-    client._genai_client.create_chat.side_effect = ValueError("API key leaked")
-
-    chunks = []
-    async for chunk in client.stream(message="hi", user_id="user1"):
-        chunks.append(chunk)
-
-    # Should yield fallback message for API key error
-    assert len(chunks) > 0
-
-
-# ============================================================================
-# TESTS: conversational / conversational_with_tools
-# ============================================================================
-@pytest.mark.asyncio
-async def test_conversational(mock_genai_available, mock_genai_client):
-    client = ZantaraAIClient(api_key="test")
-    with patch.object(
-        client,
-        "chat_async",
-        return_value={"text": "Resp", "model": "gemini", "provider": "google", "tokens": {}},
+async def test_stream_mock_mode():
+    with (
+        patch(f"{_MODULE}.collect_seats", return_value=[]),
+        patch("backend.app.core.config.settings.environment", "development"),
+        patch(f"{_MODULE}.asyncio.sleep", new=AsyncMock()),
     ):
-        result = await client.conversational("hi", "user1")
-        assert result["text"] == "Resp"
-        assert result["ai_used"] == "zantara-ai"
+        client = ZantaraAIClient()
+        text = await _collect(client, message="hi", user_id="user1")
+    assert "MOCK" in text
 
 
 @pytest.mark.asyncio
-async def test_conversational_with_tools(mock_genai_available, mock_genai_client):
-    client = ZantaraAIClient(api_key="test")
-    with patch.object(
-        client,
-        "chat_async",
-        return_value={"text": "Resp", "model": "gemini", "provider": "google", "tokens": {}},
-    ):
-        result = await client.conversational_with_tools("hi", "user1", tools=[{}])
-        assert result["text"] == "Resp"
-        assert result["used_tools"] is False
+async def test_stream_without_a_seat_yields_the_unavailable_message(lane):
+    client = ZantaraAIClient()
+    with patch(f"{_MODULE}.collect_seats", return_value=[]):
+        text = await _collect(client, message="hi", user_id="user1", language="en")
+    assert text == _words(get_fallback_message("service_unavailable", "en"))
+    lane.assert_not_awaited()
 
 
-def test_is_available(mock_genai_available, mock_genai_client):
-    client = ZantaraAIClient(api_key="test")
-    assert client.is_available() is True
+@pytest.mark.asyncio
+async def test_stream_not_available_error_yields_the_unavailable_message(lane):
+    client = ZantaraAIClient()
+    lane.side_effect = ClaudeOAuthNotAvailable("no door")
+    text = await _collect(client, message="hi", user_id="user1")
+    assert text == _words(get_fallback_message("service_unavailable", "en"))
+    assert lane.await_count == 1
 
-    client = ZantaraAIClient(api_key=None)
-    client.mock_mode = True
-    assert client.is_available() is True
+
+@pytest.mark.asyncio
+async def test_stream_empty_output_ends_in_the_connection_message(lane):
+    client = ZantaraAIClient()
+    lane.return_value = _resp("   ")
+    text = await _collect(client, message="hi", user_id="user1")
+    assert text == _words(get_fallback_message("connection_error", "en"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tail", ["console_1: authentication_error", "console_1: quota_exhausted"])
+async def test_stream_terminal_seat_failure_answers_at_once_without_retry(lane, tail):
+    client = ZantaraAIClient()
+    lane.side_effect = _seat_error(tail)
+    text = await _collect(client, message="hi", user_id="user1")
+    assert text == _words(get_fallback_message("api_key_error", "en"))
+    assert lane.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_a_rate_limit_is_retried_and_then_answers(lane):
+    client = ZantaraAIClient()
+    lane.side_effect = [_seat_error("console_1: rate limited"), _resp("recovered")]
+    text = await _collect(client, message="hi", user_id="user1")
+    assert text == "recovered"
+    assert lane.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_stream_exhausted_retries_end_in_the_connection_message(lane):
+    client = ZantaraAIClient()
+    lane.side_effect = _seat_error("console_1: rate limited")
+    text = await _collect(client, message="hi", user_id="user1")
+    assert text == _words(get_fallback_message("connection_error", "en"))
+    assert lane.await_count == client.retry_handler.max_retries
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", ["hello\x00world", "x" * 140_000, "bad\ud800text"])
+async def test_stream_refuses_an_invalid_prompt_before_the_cli(lane, bad):
+    client = ZantaraAIClient()
+    with pytest.raises(ValueError):
+        await _collect(client, message=bad, user_id="user1")
+    lane.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stream_logs_never_carry_the_prompt_or_the_answer(lane, caplog):
+    caplog.set_level(logging.DEBUG)
+    client = ZantaraAIClient()
+    lane.return_value = _resp(f"{_SENTINEL} answer")
+    await _collect(client, message=f"{_SENTINEL} question", user_id="user1")
+    lane.side_effect = _seat_error("console_1: rate limited")
+    await _collect(client, message=f"{_SENTINEL} question", user_id="user1")
+    assert _SENTINEL not in caplog.text
+
+
+# ============================================================================
+# conversational / conversational_with_tools / close
+# ============================================================================
+@pytest.mark.asyncio
+async def test_conversational(lane):
+    client = ZantaraAIClient()
+    result = await client.conversational("hi", "user1")
+    assert result["text"] == "answer"
+    assert result["ai_used"] == "zantara-ai"
+    assert result["provider"] == "claude_console"
+
+
+@pytest.mark.asyncio
+async def test_conversational_with_tools_falls_back_to_plain_conversation(lane):
+    client = ZantaraAIClient()
+    result = await client.conversational_with_tools("hi", "user1", tools=[{}])
+    assert result["text"] == "answer"
+    assert result["used_tools"] is False
+    assert result["tools_called"] == []
+
+
+@pytest.mark.asyncio
+async def test_close_is_a_no_op(lane):
+    await ZantaraAIClient().close()
