@@ -13,13 +13,25 @@ from backend.app.services.hr.hr_service import BonusPeriodLockedError
     ("instant", "expected"),
     [
         ("2026-11-28T15:59:59+00:00", date(2026, 11, 28)),
-        ("2026-11-28T16:00:00+00:00", date(2026, 12, 1)),
-        ("2026-12-31T15:59:59+00:00", date(2027, 1, 1)),
+        ("2026-11-28T16:00:00+00:00", date(2026, 11, 29)),
+        ("2026-11-30T15:59:59+00:00", date(2026, 11, 30)),
+        ("2026-11-30T16:00:00+00:00", date(2026, 12, 1)),
+        ("2026-12-31T15:59:59+00:00", date(2026, 12, 31)),
         ("2026-12-31T16:00:00+00:00", date(2027, 1, 1)),
+        ("2027-02-28T15:59:59+00:00", date(2027, 2, 28)),
+        ("2027-02-28T16:00:00+00:00", date(2027, 3, 1)),
     ],
 )
 def test_cutoff_uses_the_employee_business_day(instant, expected):
     assert bonus.payroll_award_date(datetime.fromisoformat(instant)).date() == expected
+
+
+@pytest.mark.parametrize("day", range(1, 31))
+def test_every_november_day_awards_in_november(day):
+    # The bonus month is the calendar month up to its last day: no roll-over after the 28th.
+    late_evening = datetime(2026, 11, day, 23, 59, 59, tzinfo=bonus.WITA)
+    awarded = bonus.payroll_award_date(late_evening)
+    assert (awarded.year, awarded.month, awarded.day) == (2026, 11, day)
 
 
 @pytest.mark.parametrize(
