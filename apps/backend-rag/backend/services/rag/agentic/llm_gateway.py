@@ -82,6 +82,37 @@ _ALLOWED_CLAUDE_MODEL_RE = re.compile(r"^claude-[A-Za-z0-9][A-Za-z0-9._-]{1,63}$
 # whole prompt under it by dropping the OLDEST history entries first.
 _MAX_PROMPT_BYTES = 120_000
 
+
+class PromptTooLargeError(ValueError):
+    """The prompt cannot fit the argv limit even with no history. Not a provider
+    failure: it must never count against a model's circuit breaker."""
+
+
+# The ReAct loops also read a call out of free text (``ACTION: tool(...)`` and a
+# ``{"tool_name": ...}`` object). Only tools offered for THIS call may survive in
+# the text; anything else is defused before the loops see it.
+_ACTION_TEXT_RE = re.compile(r"ACTION:(\s*)(\w+)\(")
+_TOOL_NAME_JSON_RE = re.compile(r'"tool_name"(\s*:\s*)"([^"]*)"')
+
+
+def _defuse_unoffered_calls(text: str, allowed_tool_names: set[str]) -> str:
+    """Neutralise text-form tool calls to tools outside ``allowed_tool_names``."""
+    if not text:
+        return text
+
+    def _action(match: re.Match[str]) -> str:
+        if match.group(2) in allowed_tool_names:
+            return match.group(0)
+        return f"[blocked action]{match.group(1)}{match.group(2)}("
+
+    def _json_name(match: re.Match[str]) -> str:
+        if match.group(2) in allowed_tool_names:
+            return match.group(0)
+        return f'"blocked_tool_name"{match.group(1)}"{match.group(2)}"'
+
+    return _TOOL_NAME_JSON_RE.sub(_json_name, _ACTION_TEXT_RE.sub(_action, text))
+
+
 # Structured ReAct turn. ``arguments_json`` is a JSON object serialised as a
 # string so the schema stays flat and strict for every tool signature.
 _REACT_TURN_SCHEMA: dict[str, Any] = {
@@ -308,6 +339,13 @@ def _build_claude_prompt(
     while entries and len(prompt.encode("utf-8")) > _MAX_PROMPT_BYTES:
         entries.pop(0)
         prompt = _render(entries)
+    if len(prompt.encode("utf-8")) > _MAX_PROMPT_BYTES:
+        # System prompt, tools and message alone are over the argv limit. Nothing
+        # of them is cut (the CRM scope note is a suffix of the message): the call
+        # is refused outright instead of failing later with E2BIG.
+        raise PromptTooLargeError(
+            f"prompt is {len(prompt.encode('utf-8'))} bytes without history; limit {_MAX_PROMPT_BYTES}"
+        )
     return prompt
 
 
@@ -738,6 +776,12 @@ class LLMGateway:
                 logger.debug("LLMGateway: %s response received", model_name)
                 return (text_content, model_name, response, token_usage)
 
+            except PromptTooLargeError:
+                # Same prompt, same refusal on every slug: not a model failure,
+                # so no circuit-breaker strike and no fallback attempt.
+                logger.error("LLMGateway: prompt exceeds the argv limit; call refused")
+                raise
+
             except ClaudeOAuthError as e:
                 self._record_failure(model_name, e)
                 logger.warning("Console seats failed for %s", model_name)
@@ -836,14 +880,24 @@ class LLMGateway:
                 raise
 
             has_calls = False
+            allowed = {t["name"] for t in effective_tools if isinstance(t, dict) and t.get("name")}
             if use_react_tools:
-                allowed = {
-                    t["name"] for t in effective_tools if isinstance(t, dict) and t.get("name")
-                }
                 text_content, response_obj, has_calls = _parse_react_response(cl_resp, allowed)
             else:
                 text_content = cl_resp.text or ""
                 response_obj = _plain_response(text_content)
+
+            if with_tools:
+                # The loop that sent this turn reads calls out of free text too.
+                # Whatever the tools offered (none included), only offered names
+                # may survive in it.
+                defused = _defuse_unoffered_calls(
+                    text_content, allowed if use_react_tools else set()
+                )
+                if defused != text_content:
+                    logger.warning("LLMGateway: defused a text-form call to an unoffered tool")
+                    text_content = defused
+                    response_obj.text = defused
 
             if not text_content and not has_calls:
                 logger.warning("LLMGateway: empty response from %s", model_name)

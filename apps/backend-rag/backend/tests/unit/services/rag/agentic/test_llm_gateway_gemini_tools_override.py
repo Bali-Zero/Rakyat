@@ -358,3 +358,130 @@ class TestSendMessageForwardsToolsOverride:
             await gateway.send_message(chat=MagicMock(), message="hi")
 
         assert mock_send.call_args.kwargs["gemini_tools_override"] is None
+
+
+class TestAllowlistHoldsInEveryParsingMode:
+    """Codex gate (PR #1011, round 1, P1): the allowlist covered only `tool_calls`; the
+    ReAct loops also read a call out of free text, so the text had to be defused."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "ACTION: team_my_clients()",
+            'Calling {"tool_name": "team_my_clients", "tool_input": {}}',
+        ],
+        ids=["action_text", "tool_name_json"],
+    )
+    @pytest.mark.parametrize("field", ["thought", "final_answer", "raw_text"])
+    async def test_an_unoffered_text_call_is_defused(self, gateway_with_completion, text, field):
+        gateway, call = gateway_with_completion
+        if field == "thought":
+            call.return_value = _turn({"thought": text, "tool_calls": [], "final_answer": None})
+        elif field == "final_answer":
+            call.return_value = _turn(_final(text))
+        else:
+            call.return_value = _turn(None, text=text)
+
+        out, response, _usage = await gateway._call_model(
+            "claude-sonnet-5-5",
+            with_tools=True,
+            chat=None,
+            message="hi",
+            gemini_tools_override=[_decl("vector_search")],
+        )
+
+        assert parse_tool_calls_from_response(response, out)[0] == []
+        assert response.text == out
+
+    @pytest.mark.asyncio
+    async def test_with_no_tools_offered_no_text_call_survives(self, gateway_with_completion):
+        gateway, call = gateway_with_completion
+        call.return_value = _turn(None, text="ACTION: team_my_clients()")
+
+        out, response, _usage = await gateway._call_model(
+            "claude-sonnet-5-5",
+            with_tools=True,
+            chat=None,
+            message="hi",
+            gemini_tools_override=[],
+        )
+
+        assert parse_tool_calls_from_response(response, out)[0] == []
+
+    @pytest.mark.asyncio
+    async def test_an_offered_text_call_is_left_alone(self, gateway_with_completion):
+        gateway, call = gateway_with_completion
+        call.return_value = _turn(None, text='ACTION: vector_search(query="kitas")')
+
+        out, response, _usage = await gateway._call_model(
+            "claude-sonnet-5-5",
+            with_tools=True,
+            chat=None,
+            message="hi",
+            gemini_tools_override=[_decl("vector_search")],
+        )
+
+        assert out == 'ACTION: vector_search(query="kitas")'
+        assert [t.tool_name for t in parse_tool_calls_from_response(response, out)[0]] == [
+            "vector_search"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_a_turn_that_does_not_ask_for_tools_is_not_touched(self, gateway_with_completion):
+        gateway, call = gateway_with_completion
+        call.return_value = _turn(None, text="ACTION: team_my_clients() is quoted prose")
+
+        out, _response, _usage = await gateway._call_model(
+            "claude-sonnet-5-5", with_tools=False, chat=None, message="hi"
+        )
+
+        assert out == "ACTION: team_my_clients() is quoted prose"
+
+
+class TestOversizedPromptIsRefusedNotShipped:
+    """Codex gate (PR #1011, round 1, P2): the cap only trimmed history."""
+
+    @pytest.mark.asyncio
+    async def test_a_prompt_that_cannot_fit_is_refused_before_the_cli_runs(
+        self, gateway_with_completion
+    ):
+        from backend.services.rag.agentic.llm_gateway import PromptTooLargeError
+
+        gateway, call = gateway_with_completion
+
+        with pytest.raises(PromptTooLargeError):
+            await gateway._call_model(
+                "claude-sonnet-5-5", with_tools=False, chat=None, message="x" * 140_000
+            )
+
+        call.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_refusal_is_not_a_model_failure_and_opens_no_circuit(
+        self, gateway_with_completion
+    ):
+        gateway, call = gateway_with_completion
+
+        for _ in range(8):
+            with pytest.raises(RuntimeError, match="All LLM models failed"):
+                await gateway.send_message(
+                    chat=None, message="x" * 140_000, enable_function_calling=False
+                )
+
+        assert gateway._is_circuit_open(gateway.model_name_flash) is False
+        call.assert_not_awaited()
+
+    def test_the_scope_note_suffix_is_never_trimmed_when_history_is_dropped(self):
+        from backend.services.rag.agentic.llm_gateway import _build_claude_prompt
+
+        message = "question\n\n[CRM NOTE] keep"
+        prompt = _build_claude_prompt(
+            message=message,
+            system_prompt="sys",
+            history_entries=[("User", "h" * 119_000)],
+            tools=None,
+        )
+
+        assert prompt.endswith(message)
+        assert len(prompt.encode("utf-8")) <= 120_000
