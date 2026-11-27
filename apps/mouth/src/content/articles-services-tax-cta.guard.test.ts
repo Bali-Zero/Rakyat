@@ -9,13 +9,15 @@ import { describe, expect, it } from "vitest";
  * articles-services-visa-cta and articles-services-company-cta.
  *
  * Declared limits: reads the MDX as text, English files only. Translations
- * follow through the automatic translation flow. tax/vat-ppn-guide is not
- * here: its .id/.it twins are pinned to the English body by source_sha256
- * (tax-accounting-prices.truth.test.ts), so a card there moves the twins too.
+ * follow through the automatic translation flow. Exception: tax/vat-ppn-guide
+ * has .id/.it twins pinned to the English body by source_sha256
+ * (tax-accounting-prices.truth.test.ts), so its card was added to the twins in
+ * the same change and their hashes were updated.
  */
 const ARTICLES: [file: string, topic: string][] = [
   ["tax/double-tax-agreement-claiming-benefits.mdx", "SKD"],
   ["property/rental-income-tax.mdx", "PPh Final"],
+  ["tax/vat-ppn-guide.mdx", "Faktur Pajak"],
 ];
 const CARD = /<InfoCard\b[^>]*>[\s\S]*?<\/InfoCard>/g;
 const LINK = "](/services/tax)";
