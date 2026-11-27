@@ -8,7 +8,6 @@ import os
 
 os.environ.setdefault("JWT_SECRET_KEY", "test_jwt_secret_key_for_testing_only_min_32_chars_long")
 os.environ.setdefault("API_KEYS", "test_api_key_1,test_api_key_2")
-os.environ.setdefault("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
 os.environ.setdefault("ENVIRONMENT", "test")
 
 import pytest

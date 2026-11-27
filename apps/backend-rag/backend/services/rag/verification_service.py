@@ -235,6 +235,7 @@ class VerificationService:
                 status=VerificationStatus.PARTIALLY_VERIFIED,
                 score=0.5,
                 reasoning="No context provided for verification.",
+                verdict_available=False,
             )
 
         # Prepare context text

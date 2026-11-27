@@ -203,6 +203,7 @@ class TestVerificationServiceFallbacks:
         )
         assert result.status == VerificationStatus.PARTIALLY_VERIFIED
         assert result.score == 0.5
+        assert result.verdict_available is False
         lane.assert_not_called()
 
 
