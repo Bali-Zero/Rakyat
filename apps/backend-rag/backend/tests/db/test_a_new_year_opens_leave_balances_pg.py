@@ -217,14 +217,17 @@ async def test_open_year_preserves_existing_rows_and_only_copies_selected_employ
         await _open_year_balances(conn, 2027, first_employee)
 
     rows = await pool.fetch(
-        "SELECT employee_id, leave_type_id, allocated_days, used_days, pending_days "
-        "FROM hr_leave_balances WHERE balance_year = 2027 ORDER BY employee_id, leave_type_id"
+        "SELECT employee_id, leave_type_id, allocated_days, carried_over, used_days, "
+        "pending_days FROM hr_leave_balances WHERE balance_year = 2027 "
+        "ORDER BY employee_id, leave_type_id"
     )
+    # The row opened earlier keeps its own days and is re-carried from 2026: 12 - 5.
     assert [dict(row) for row in rows] == [
         {
             "employee_id": first_employee,
             "leave_type_id": annual_id,
             "allocated_days": 20,
+            "carried_over": 7,
             "used_days": 7,
             "pending_days": 4,
         }

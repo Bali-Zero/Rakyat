@@ -161,6 +161,35 @@ async def _carry_annual_remainder(conn: Any, year: int, employee_id: int | None 
     await conn.execute(query, *params)
 
 
+async def _lock_leave_balances(conn: Any, employee_id: int) -> None:
+    """Hold one employee's leave balances until the transaction ends.
+
+    Every leave request, approval and rejection, and every opening of a year, takes it before
+    reading a balance. A check then sees what the write before it left, and no year is carried
+    from a year another transaction is still changing. The database no longer stops a balance
+    below zero, so this is what keeps two requests from both spending the same days.
+    """
+    await conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtext('hr_leave_balance:' || $1::int::text))",
+        employee_id,
+    )
+
+
+async def _lock_leave_balances_a_year_opens_from(conn: Any, year: int) -> None:
+    """Take _lock_leave_balances for every employee `year` opens from, in id order."""
+    await conn.execute(
+        """
+        SELECT pg_advisory_xact_lock(hashtext('hr_leave_balance:' || prior.employee_id::text))
+        FROM (
+            SELECT DISTINCT employee_id FROM hr_leave_balances
+            WHERE balance_year = $1::int - 1
+            ORDER BY employee_id
+        ) AS prior
+        """,
+        year,
+    )
+
+
 async def _carry_forward(conn: Any, employee_id: int, from_year: int) -> None:
     """Re-carry every later year already opened for one employee, oldest first."""
     last_year = await conn.fetchval(
@@ -1400,10 +1429,20 @@ class HRService:
 
     # ─── LEAVE ───────────────────────────────────────────────────────
 
+    @staticmethod
+    async def _lock_requesters_balances(conn: Any, request_id: int) -> None:
+        """Take _lock_leave_balances for the employee a leave request belongs to, if it exists."""
+        employee_id = await conn.fetchval(
+            "SELECT employee_id FROM hr_leave_requests WHERE id = $1", request_id
+        )
+        if employee_id is not None:
+            await _lock_leave_balances(conn, employee_id)
+
     async def request_leave(self, data: dict[str, Any]) -> dict[str, Any]:
         """Create a leave request."""
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
+                await _lock_leave_balances(conn, data["employee_id"])
                 # Validate leave_type_id exists and is active (server-side guard
                 # against clients bypassing the dropdown filter).
                 leave_type = await conn.fetchrow(
@@ -1481,6 +1520,7 @@ class HRService:
         """Approve a leave request."""
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
+                await self._lock_requesters_balances(conn, request_id)
                 req = await conn.fetchrow(
                     """
                     UPDATE hr_leave_requests
@@ -1525,6 +1565,7 @@ class HRService:
         """Reject a leave request."""
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
+                await self._lock_requesters_balances(conn, request_id)
                 req = await conn.fetchrow(
                     """
                     UPDATE hr_leave_requests
@@ -1607,7 +1648,8 @@ class HRService:
         """Get leave balances for an employee."""
         if year is None:
             year = date.today().year
-        async with self.db_pool.acquire() as conn:
+        async with self.db_pool.acquire() as conn, conn.transaction():
+            await _lock_leave_balances(conn, employee_id)
             await _open_year_balances(conn, year, employee_id)
             rows = await conn.fetch(
                 """
@@ -1629,7 +1671,8 @@ class HRService:
         """Get leave balance summary for all active employees."""
         if year is None:
             year = date.today().year
-        async with self.db_pool.acquire() as conn:
+        async with self.db_pool.acquire() as conn, conn.transaction():
+            await _lock_leave_balances_a_year_opens_from(conn, year)
             await _open_year_balances(conn, year)
             rows = await conn.fetch(
                 """

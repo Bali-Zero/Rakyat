@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import date
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import asyncpg
@@ -13,9 +16,10 @@ import pytest
 import pytest_asyncio
 
 from backend.app.services.hr.hr_service import HRService, _open_year_balances
+from backend.db.migration_base import split_migration_sql
 
 # The leave tables as migration_068_hr_payroll.py creates them, CHECKs included;
-# migration 388 is then applied on top, exactly as it ships.
+# the forward part of migration 388 is then applied on top, exactly as it ships.
 _SCHEMA_068_SQL = """
 CREATE TABLE team_members (
     id VARCHAR(36) PRIMARY KEY,
@@ -99,7 +103,7 @@ async def pool() -> AsyncIterator[asyncpg.Pool]:
             TEST_DSN, min_size=1, max_size=4, server_settings={"search_path": schema}
         )
         await created.execute(_SCHEMA_068_SQL)
-        await created.execute(_MIGRATION_388.read_text())
+        await created.execute(split_migration_sql(_MIGRATION_388.read_text())[0])
         yield created
     finally:
         if created is not None:
@@ -349,3 +353,168 @@ async def test_only_the_two_debt_checks_are_gone(pool: asyncpg.Pool) -> None:
         "UPDATE hr_leave_balances SET carried_over = -3, used_days = 20 WHERE employee_id = $1",
         employee_id,
     )
+
+
+@pytest.mark.asyncio
+async def test_the_rollback_restores_both_checks_without_failing_on_debt(
+    pool: asyncpg.Pool,
+) -> None:
+    employee_id = await _employee(pool, "Synthetic Rollback")
+    annual_id = await _leave_type(pool, "annual", 12)
+    await _balance(pool, employee_id, annual_id, 2026, 12, 14)
+    _, rollback = split_migration_sql(_MIGRATION_388.read_text())
+    assert rollback
+
+    await pool.execute(rollback)
+
+    checks = await pool.fetch(
+        "SELECT conname, convalidated FROM pg_constraint "
+        "WHERE conrelid = 'hr_leave_balances'::regclass "
+        "AND conname IN ('ck_hr_leave_bal_nonneg', 'hr_leave_balances_carried_over_check') "
+        "ORDER BY conname"
+    )
+    assert [tuple(row) for row in checks] == [
+        ("ck_hr_leave_bal_nonneg", False),
+        ("hr_leave_balances_carried_over_check", False),
+    ]
+    other = await _employee(pool, "Synthetic After Rollback")
+    with pytest.raises(asyncpg.CheckViolationError):
+        await _balance(pool, other, annual_id, 2026, 12, 13)
+
+
+class _HeldConnection:
+    """A connection that runs `reached` right after the first statement containing `marker`."""
+
+    def __init__(
+        self, conn: asyncpg.Connection, marker: str, reached: Callable[[], Awaitable[None]]
+    ) -> None:
+        self._conn = conn
+        self._marker = marker
+        self._reached = reached
+        self._held = False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._conn, name)
+
+    async def _after(self, query: str) -> None:
+        if not self._held and self._marker in query:
+            self._held = True
+            await self._reached()
+
+    async def fetchrow(self, query: str, *args: Any) -> Any:
+        row = await self._conn.fetchrow(query, *args)
+        await self._after(query)
+        return row
+
+    async def fetchval(self, query: str, *args: Any) -> Any:
+        value = await self._conn.fetchval(query, *args)
+        await self._after(query)
+        return value
+
+
+class _HoldingPool:
+    """Hands HRService connections that pause at a chosen statement."""
+
+    def __init__(
+        self, pool: asyncpg.Pool, marker: str, reached: Callable[[], Awaitable[None]]
+    ) -> None:
+        self._pool = pool
+        self._marker = marker
+        self._reached = reached
+
+    @contextlib.asynccontextmanager
+    async def acquire(self) -> AsyncIterator[_HeldConnection]:
+        async with self._pool.acquire() as conn:
+            yield _HeldConnection(conn, self._marker, self._reached)
+
+
+async def _wait_briefly(event: asyncio.Event) -> None:
+    # Without the employee lock the other side always arrives; with it, it cannot until this
+    # transaction ends, so the wait gives up and lets this side finish first.
+    with contextlib.suppress(asyncio.TimeoutError):
+        await asyncio.wait_for(event.wait(), 1.0)
+
+
+@pytest.mark.asyncio
+async def test_two_requests_at_once_cannot_both_spend_the_same_days(pool: asyncpg.Pool) -> None:
+    employee_id = await _employee(pool, "Synthetic Double Click")
+    marriage_id = await _leave_type(pool, "marriage", 3)
+    await _balance(pool, employee_id, marriage_id, 2026, 3, 0)
+    both_read = asyncio.Event()
+    readers = 0
+
+    async def read_the_balance() -> None:
+        nonlocal readers
+        readers += 1
+        if readers == 2:
+            both_read.set()
+        await _wait_briefly(both_read)
+
+    service = HRService(_HoldingPool(pool, "SELECT * FROM hr_leave_balances", read_the_balance))
+    request = {
+        "employee_id": employee_id,
+        "leave_type_id": marriage_id,
+        "start_date": date(2026, 12, 14),
+        "end_date": date(2026, 12, 16),
+        "total_days": 3,
+    }
+
+    results = await asyncio.gather(
+        service.request_leave(dict(request)),
+        service.request_leave(dict(request)),
+        return_exceptions=True,
+    )
+
+    refused = [r for r in results if isinstance(r, ValueError)]
+    assert len(refused) == 1
+    assert "Insufficient leave balance" in str(refused[0])
+    assert (await _row(pool, employee_id, marriage_id, 2026))["pending_days"] == 3
+    assert await pool.fetchval("SELECT count(*) FROM hr_leave_requests") == 1
+
+
+@pytest.mark.asyncio
+async def test_an_approval_and_the_first_opening_of_next_year_do_not_cross(
+    pool: asyncpg.Pool,
+) -> None:
+    service = HRService(pool)
+    employee_id = await _employee(pool, "Synthetic Crossing")
+    reviewer = await _member(pool, "Synthetic Crossing Reviewer")
+    annual_id = await _leave_type(pool, "annual", 12)
+    await _balance(pool, employee_id, annual_id, 2026, 12, 5)
+    december = await service.request_leave(
+        {
+            "employee_id": employee_id,
+            "leave_type_id": annual_id,
+            "start_date": date(2026, 12, 28),
+            "end_date": date(2026, 12, 29),
+            "total_days": 2,
+        }
+    )
+    approval_held = asyncio.Event()
+    january_done = asyncio.Event()
+
+    async def hold_the_approval() -> None:
+        approval_held.set()
+        await _wait_briefly(january_done)
+
+    approver = HRService(_HoldingPool(pool, "SELECT MAX(balance_year)", hold_the_approval))
+
+    async def ask_for_january() -> None:
+        await approval_held.wait()
+        try:
+            await service.request_leave(
+                {
+                    "employee_id": employee_id,
+                    "leave_type_id": annual_id,
+                    "start_date": date(2027, 1, 4),
+                    "end_date": date(2027, 1, 4),
+                    "total_days": 1,
+                }
+            )
+        finally:
+            january_done.set()
+
+    await asyncio.gather(approver.approve_leave(december["id"], reviewer), ask_for_january())
+
+    assert (await _row(pool, employee_id, annual_id, 2026))["used_days"] == 7
+    assert (await _row(pool, employee_id, annual_id, 2027))["carried_over"] == 5
