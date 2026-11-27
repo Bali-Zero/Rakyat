@@ -278,9 +278,14 @@ PARAGRAF_PATTERN = re.compile(r"^Paragraf\s+(\d+)\s+(.+?)(?=\n|$)", re.IGNORECAS
 
 # Pasal (Article) - CRITICAL UNIT
 # Supports "Pasal 1", "Pasal I", "Pasal 1A"
+# The number must not run into a LOWERCASE letter: "Pasal ini" and "Pasal lain" are prose, and
+# the pattern is case-insensitive, so without the boundary they read as articles "i" and "l".
+# The check is case-sensitive on purpose: OCR text layers read 0 as O ("Pasal 2OO", "Pasal lOO"),
+# and those headings must stay headings, or the article's text is silently glued onto the one
+# before it. Measured on 39 law PDFs: rejecting any letter lost 5 such headings, this loses none.
 # Relaxed start anchor to handle OCR artifacts
 PASAL_PATTERN = re.compile(
-    r"(?:^|\n)[^\S\n]*Pasal\s+([IVXLC]+|\d+[A-Z]?)(?:[^\S\n]*\n)*[^\S\n]*(.+?)(?=(?:^|\n)[^\S\n]*Pasal\s+(?:[IVXLC]+|\d+[A-Z]?)|^[^\S\n]*BAB\s+|^Penjelasan|\Z)",
+    r"(?:^|\n)[^\S\n]*Pasal\s+([IVXLC]+|\d+[A-Z]?)(?-i:(?![a-z]))(?:[^\S\n]*\n)*[^\S\n]*(.+?)(?=(?:^|\n)[^\S\n]*Pasal\s+(?:[IVXLC]+|\d+[A-Z]?)(?-i:(?![a-z]))|^[^\S\n]*BAB\s+|^Penjelasan|\Z)",
     re.IGNORECASE | re.MULTILINE | re.DOTALL,
 )
 
