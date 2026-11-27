@@ -26,6 +26,10 @@ _MAX_DEPTH = 12
 
 
 def _sensitive(key: Any, value: Any) -> bool:
+    # The CRM uses short integer row IDs as its public-safe correlation reference.
+    # Patterned external client IDs and long identifier-shaped numbers stay masked.
+    if key == "client_id" and type(value) is int and 0 < value <= 2_147_483_647:
+        return False
     # Preserve the CLI reporting boundary's existing redaction marker.
     if isinstance(value, str) and value == "<withheld>":
         return False

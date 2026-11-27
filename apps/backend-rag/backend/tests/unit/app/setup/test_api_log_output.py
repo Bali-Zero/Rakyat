@@ -81,6 +81,7 @@ def _exercise_outputs(mode, log_file):
     structured = {"items": [{"name": HIDDEN, "attempt": 2}, EMAIL, {"name": "<withheld>"}]}
     structured.update(path=Path("/v1/jobs/42"), when=datetime(2025, 1, 2, tzinfo=timezone.utc))
     structured.update(price=Decimal("1234.50"), trace=UUID(int=1))
+    structured["references"] = [{"client_id": item} for item in (4242, "CL-000042", 10**15)]
     deep = {"code": "fixture-too-deep"}
     for _ in range(20):
         deep = {"next": deep}
@@ -111,6 +112,11 @@ def _exercise_outputs(mode, log_file):
         {"name": REDACTED, "attempt": 2},
         REDACTED,
         {"name": "<withheld>"},
+    ]
+    assert row["context"]["references"] == [
+        {"client_id": 4242},
+        {"client_id": REDACTED},
+        {"client_id": REDACTED},
     ]
     assert row["context"]["price"] == "1234.50"
     assert row["context"]["trace"] == str(UUID(int=1))
