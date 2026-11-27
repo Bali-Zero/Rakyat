@@ -38,6 +38,13 @@ from backend.services.intel import (
     IntelClassificationService,
     IntelStagingService,
 )
+from backend.services.intel.intel_public_editorial import (
+    editorial_fingerprint,
+    enroll_public_editorial,
+    enrolled_items,
+    is_public_editorial,
+    update_public_editorial,
+)
 from backend.services.intel.intel_staging_service import assert_valid_item_id
 
 # Add scraper scripts to path for ClaudeValidator import
@@ -244,6 +251,12 @@ class WorkspacePublicationConfirmedRequest(BaseModel):
     confirmation: Literal["LIVE_VERIFIED"]
 
 
+class PublicEditorialEnrollmentRequest(BaseModel):
+    confirmation: Literal["REVIEWED_PUBLIC_EDITORIAL"]
+    expected_source_url: str = Field(..., max_length=2000)
+    expected_fingerprint: str = Field(..., pattern=r"^[a-f0-9]{64}$")
+
+
 VALID_HOMEPAGE_POSITIONS = {
     "hero_main",
     "hero_2",
@@ -275,6 +288,40 @@ def _workspace_article_path(category: str, slug: str) -> str:
 # ANALYTICS → intel_analytics.py
 
 # --- STAGING ENDPOINTS ---
+
+
+@router.post("/api/intel/staging/visa/{item_id}/workspace-editorial")
+async def enroll_workspace_editorial(
+    item_id: str,
+    body: PublicEditorialEnrollmentRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Enroll one admin-reviewed public item without reclassifying or publishing it."""
+    from backend.app.routers.intel_scraper import _require_publish_admin
+
+    _require_publish_admin(current_user)
+    try:
+        created = enroll_public_editorial(
+            staging_service,
+            item_id,
+            body.expected_source_url,
+            body.expected_fingerprint,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Item not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="Enrollment precondition failed") from exc
+    return {"success": True, "item_id": item_id, "intel_type": "visa", "idempotent": not created}
+
+
+def _workspace_item(item_id: str) -> tuple[str, dict[str, Any]]:
+    item = staging_service.load_staging_item("news", item_id)
+    if isinstance(item, dict):
+        return "news", item
+    item = staging_service.load_staging_item("visa", item_id)
+    if is_public_editorial(item, item_id):
+        return "visa", item
+    raise HTTPException(status_code=404, detail="Item not found")
 
 
 def require_workspace_marketing_key(request: Request) -> None:
@@ -447,9 +494,7 @@ async def workspace_marketing_capabilities() -> dict[str, Any]:
     from backend.services.integrations.github_publisher import github_publisher
 
     staging_readable = staging_service.news_staging_dir.is_dir()
-    staging_writable = staging_readable and os.access(
-        staging_service.news_staging_dir, os.W_OK
-    )
+    staging_writable = staging_readable and os.access(staging_service.news_staging_dir, os.W_OK)
     publisher_ready = github_publisher.is_configured
     pillow_available = importlib.util.find_spec("PIL") is not None
     write_ready = staging_writable and publisher_ready
@@ -498,6 +543,7 @@ async def workspace_marketing_pending_news(
     )
     raw_items = payload.get("items", []) if isinstance(payload, dict) else []
     items = raw_items if isinstance(raw_items, list) else []
+    items = [*items, *enrolled_items(staging_service)]
     pending_items = [
         item
         for item in items
@@ -544,9 +590,7 @@ async def workspace_marketing_update_news(
         raise HTTPException(status_code=404, detail="Item not found") from exc
     if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", body.slug):
         raise HTTPException(status_code=422, detail="Slug must be lowercase kebab-case")
-    item = staging_service.load_staging_item("news", item_id)
-    if not isinstance(item, dict):
-        raise HTTPException(status_code=404, detail="Item not found")
+    intel_type, item = _workspace_item(item_id)
     if item.get("status", "pending") != "pending" or item.get("published_url"):
         raise HTTPException(status_code=409, detail="Article is not editable")
     from backend.services.integrations.github_publisher import github_publisher
@@ -559,8 +603,19 @@ async def workspace_marketing_update_news(
             status_code=409,
             detail="Slug already belongs to a public article",
         )
-    item.update(body.model_dump())
-    staging_service.save_staging_item("news", item_id, item)
+    if intel_type == "visa":
+        try:
+            update_public_editorial(
+                staging_service,
+                item_id,
+                editorial_fingerprint(item),
+                body.model_dump(),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail="Article changed during edit") from exc
+    else:
+        item.update(body.model_dump())
+        staging_service.save_staging_item("news", item_id, item)
     return {
         "success": True,
         "item_id": item_id,
@@ -578,9 +633,7 @@ async def workspace_marketing_attach_cover(
 ) -> dict[str, Any]:
     """Attach one native-ImageGen cover to a still-pending article."""
 
-    item = staging_service.load_staging_item("news", item_id)
-    if not isinstance(item, dict):
-        raise HTTPException(status_code=404, detail="Item not found")
+    intel_type, item = _workspace_item(item_id)
     if item.get("status", "pending") != "pending" or item.get("published_url"):
         raise HTTPException(status_code=409, detail="Article cover is not editable")
     try:
@@ -626,6 +679,20 @@ async def workspace_marketing_attach_cover(
             detail="Cover dimensions must be at least 1200x630 and at most 40 megapixels",
         )
 
+    if intel_type == "visa":
+        try:
+            update_public_editorial(
+                staging_service,
+                item_id,
+                editorial_fingerprint(item),
+                {},
+                cover=(image_bytes, suffix),
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=409, detail="Article changed during cover edit"
+            ) from exc
+        return {"success": True, "item_id": item_id}
     result = await upload_cover_image(
         "news",
         item_id,
@@ -648,9 +715,7 @@ async def workspace_marketing_news_article(item_id: str) -> dict[str, Any]:
         assert_valid_item_id(item_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="Item not found") from exc
-    item = staging_service.load_staging_item("news", item_id)
-    if not isinstance(item, dict):
-        raise HTTPException(status_code=404, detail="Item not found")
+    _, item = _workspace_item(item_id)
     if item.get("status", "pending") != "pending" or item.get("published_url"):
         raise HTTPException(status_code=404, detail="Item not found")
     return _workspace_marketing_article(item)
@@ -705,9 +770,7 @@ async def workspace_marketing_publish_news(
         assert_valid_item_id(item_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="Item not found") from exc
-    item = staging_service.load_staging_item("news", item_id)
-    if not isinstance(item, dict):
-        raise HTTPException(status_code=404, detail="Item not found")
+    intel_type, item = _workspace_item(item_id)
     current_status = str(item.get("status", "pending"))
     if current_status in {"publication_pending", "published"}:
         if item.get("publish_position", "latest") != body.position:
@@ -763,7 +826,7 @@ async def workspace_marketing_publish_news(
 
     lease_until = (now + timedelta(minutes=10)).isoformat()
     transitioned, current = staging_service.compare_and_set_status(
-        "news",
+        intel_type,
         item_id,
         expected={"publishing" if recovering else "pending"},
         new_status="publishing",
@@ -774,9 +837,12 @@ async def workspace_marketing_publish_news(
             "publication_lease_until": lease_until,
         },
         expected_values=(
-            {"publication_lease_until": item.get("publication_lease_until")}
-            if recovering
-            else None
+            {"publication_lease_until": item.get("publication_lease_until")} if recovering else None
+        ),
+        **(
+            {"expected_editorial_fingerprint": editorial_fingerprint(item)}
+            if intel_type == "visa"
+            else {}
         ),
     )
     if not transitioned:
@@ -790,16 +856,17 @@ async def workspace_marketing_publish_news(
     try:
         # Internal publishing has no request context, so preserve the route pool explicitly.
         result = await publish_staging_item_internal(
-            "news",
+            intel_type,
             item_id,
             actor="workspace-agent:damar",
             allow_generated_cover=False,
             position=body.position,
             pool=getattr(request.app.state, "db_pool", None) if request else None,
+            **({"require_public_editorial": True} if intel_type == "visa" else {}),
         )
     except Exception:
         staging_service.compare_and_set_status(
-            "news",
+            intel_type,
             item_id,
             expected={"publishing"},
             new_status="pending",
@@ -836,9 +903,7 @@ async def workspace_marketing_publication_status(item_id: str) -> dict[str, Any]
         assert_valid_item_id(item_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="Item not found") from exc
-    item = staging_service.load_staging_item("news", item_id)
-    if not isinstance(item, dict):
-        raise HTTPException(status_code=404, detail="Item not found")
+    _, item = _workspace_item(item_id)
     public_source_url = _workspace_marketing_article(item).get("source_url")
     return {
         "item_id": item_id,
@@ -874,9 +939,7 @@ async def workspace_marketing_confirm_live(
         assert_valid_item_id(item_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="Item not found") from exc
-    item = staging_service.load_staging_item("news", item_id)
-    if not isinstance(item, dict):
-        raise HTTPException(status_code=404, detail="Item not found")
+    intel_type, item = _workspace_item(item_id)
     if item.get("status") == "published":
         return {
             "success": True,
@@ -887,11 +950,16 @@ async def workspace_marketing_confirm_live(
         }
     now = datetime.now(timezone.utc).isoformat()
     transitioned, current = staging_service.compare_and_set_status(
-        "news",
+        intel_type,
         item_id,
         expected={"publication_pending"},
         new_status="published",
         updates={"published_at": now, "live_verified_at": now},
+        **(
+            {"expected_editorial_fingerprint": editorial_fingerprint(item)}
+            if intel_type == "visa"
+            else {}
+        ),
     )
     if not transitioned:
         raise HTTPException(
