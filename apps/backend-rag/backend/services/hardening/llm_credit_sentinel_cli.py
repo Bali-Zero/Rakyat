@@ -7,7 +7,7 @@ The cron reads the exit code, so "unknown" deliberately exits 0 — an
 unreachable API is not a billing event and must not page anyone.
 
 It runs inside the Fly machine because that is the only place holding every
-credential it needs (Gemini key, WhatsApp token, Telegram token) — the GitHub
+credential it needs (Claude Console seat keys, WhatsApp token) — the GitHub
 Action only needs FLY_API_TOKEN, which it already has.
 """
 

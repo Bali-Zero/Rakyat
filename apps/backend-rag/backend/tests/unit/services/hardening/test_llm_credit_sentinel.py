@@ -59,6 +59,42 @@ def test_depletion_is_detected_even_without_the_429_token():
     assert v.state is CreditState.DEPLETED
 
 
+def test_claude_console_quota_error_is_classified_as_depleted():
+    from backend.llm.claude_oauth_client import ClaudeOAuthError
+
+    err = ClaudeOAuthError(
+        "Claude Console seats failed after 2 attempt(s). Last error class: console_2: quota"
+    )
+    v = classify_probe_error(err)
+    assert (v.state, v.should_alert) == (CreditState.DEPLETED, True)
+
+
+def test_claude_console_rate_limited_error_is_not_depletion():
+    from backend.llm.claude_oauth_client import ClaudeOAuthError
+
+    err = ClaudeOAuthError(
+        "Claude Console seats failed after 2 attempt(s). Last error class: console_2: rate limited"
+    )
+    v = classify_probe_error(err)
+    assert (v.state, v.should_alert) == (CreditState.RATE_LIMITED, False)
+
+
+def test_claude_console_non_billing_errors_are_unknown():
+    from backend.llm.claude_oauth_client import ClaudeOAuthError, ClaudeOAuthNotAvailable
+
+    for err in (
+        ClaudeOAuthError(
+            "Claude Console seats failed after 1 attempt(s). Last error class: console_1: empty_output"
+        ),
+        ClaudeOAuthError(
+            "Claude Console seats failed after 1 attempt(s). Last error class: console_1: cli_timeout"
+        ),
+        ClaudeOAuthNotAvailable("no Claude Console key is configured"),
+    ):
+        v = classify_probe_error(err)
+        assert (v.state, v.should_alert) == (CreditState.UNKNOWN, False)
+
+
 # ----------------------------------------------------------------- sentinel
 
 

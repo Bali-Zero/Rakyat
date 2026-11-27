@@ -363,7 +363,7 @@ class CommunityDetector:
         Args:
             llm_gateway: LLMGateway with generate() method
             db_pool: Optional separate pool (uses self._pool if None)
-            llm_model: Model to use for summary generation (default: gemini-2.0-flash)
+            llm_model: Model to use for summary generation (default: claude-sonnet-5-5)
 
         Returns:
             Number of summaries generated

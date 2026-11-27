@@ -1,22 +1,24 @@
 """
-Query Expander Service - Multi-Query LLM Expansion
+Query Expander Service - Multi-Query Expansion
 
-Generates 2-3 alternative search queries using Gemini Flash to improve
-recall on complex/comparative queries. Uses RRF fusion downstream.
+Generates alternative search queries via KeywordTranslator (default) or an
+injected LLM client to improve recall on complex/comparative queries.
+Uses RRF fusion downstream.
 
 Two expansion modes:
 1. expand() — single expanded query (original + translations), backward compatible
 2. expand_multi() — list of 2-3 alternative queries for RRF fusion (NEW)
 
 Architecture:
-- Gemini Flash (fast, cheap ~$0.0001/call) with 3s timeout
-- Redis cache (1h TTL) to avoid repeat LLM calls
-- Graceful fallback to KeywordTranslator if Gemini unavailable
+- Redis cache (1h TTL) to avoid repeat expansion calls
+- Deterministic KeywordTranslator fallback by default (Gemini default retired)
+- Optional injected client seam for test verification
 - Feature flag: ENABLE_QUERY_EXPANSION
 
 Author: RIRI (original), refactored 2026-03-24
 """
 
+import asyncio
 import json
 import logging
 from typing import Any
@@ -66,10 +68,21 @@ class QueryExpander:
         self._gemini: Any = None
 
     async def _call_gemini(self, prompt: str, timeout_s: float = 3.0) -> str | None:
-        """Gemini LLM query expansion is retired (Wave 2 Stage 3); always falls back
-        to deterministic KeywordTranslator expansion."""
-        _ = (prompt, timeout_s)
-        return None
+        """Call injected LLM client with timeout if set (Gemini default retired in Wave 2 Stage 3)."""
+        if self._gemini is None:
+            return None
+        try:
+            result = await asyncio.wait_for(
+                self._gemini.generate_response(prompt=prompt),
+                timeout=timeout_s,
+            )
+            return result if result and result.strip() else None
+        except asyncio.TimeoutError:
+            logger.warning("Gemini query expansion timed out (%.1fs)", timeout_s)
+            return None
+        except Exception as e:
+            logger.warning("Gemini query expansion failed: %s", type(e).__name__)
+            return None
 
     @staticmethod
     def _clean_json(response: str) -> str:
