@@ -318,7 +318,6 @@ class KnowledgeService:
     def _init_reranker(self):
         """Lazy load the re-ranker"""
         if not hasattr(self, "reranker"):
-            from backend.app.core.config import settings
             from backend.services.rag.reranker import CrossEncoderReranker
 
             self.reranker = CrossEncoderReranker(

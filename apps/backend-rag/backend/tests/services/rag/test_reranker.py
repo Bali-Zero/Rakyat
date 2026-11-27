@@ -552,7 +552,7 @@ class TestGetReranker:
     @patch("backend.services.rag.reranker.settings")
     def test_get_reranker_is_always_local(self, mock_settings):
         """The external Ze-Rank API reranker was removed: even a stray key stays local."""
-        mock_settings.zerank_api_key = "stray-key"
+        mock_settings.zerank_api_key = object()
         mock_settings.enable_reranker = True
 
         reranker = get_reranker()
