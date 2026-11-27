@@ -342,48 +342,16 @@ class DocumentOCR:
         return base64.b64encode(buffered.getvalue()).decode()
 
     @classmethod
-    async def _gemini_vision_ocr(cls, image_base64: str, vision_service: Any) -> str:
-        """Use Gemini Vision to extract text from image.
+    async def _gemini_vision_ocr(
+        cls,
+        image_base64: str,  # noqa: ARG003
+        vision_service: Any,  # noqa: ARG003
+    ) -> str:
+        """Permanently disabled cloud Gemini Vision OCR path (local-only OCR)."""
+        from backend.services.multimodal.cloud_vision_gate import note_cloud_ocr_blocked
 
-        PII-sovereignty gated (SYMBIOSIS Law 2 / UU PDP Art. 56): the document
-        image goes to Google. Blocked unless OCR_ALLOW_CLOUD_VISION=true; when
-        blocked, returns "" so the caller degrades locally.
-        """
-        from backend.services.multimodal.cloud_vision_gate import (
-            cloud_vision_allowed,
-            note_cloud_ocr_blocked,
-        )
-
-        if not cloud_vision_allowed():
-            note_cloud_ocr_blocked("portal.document_processing.DocumentOCR._gemini_vision_ocr")
-            return ""
-        try:
-            client = vision_service._get_genai_client()
-            if not client or not client.is_available:
-                return ""
-
-            prompt = """
-            Extract all text from this document image.
-            Preserve the layout and structure as much as possible.
-            Return only the extracted text, no additional commentary.
-            """
-
-            contents = [
-                {"text": prompt},
-                {"inline_data": {"mime_type": "image/png", "data": image_base64}},
-            ]
-
-            response = await client.generate_content(
-                contents=contents,
-                model="gemini-2.0-flash-lite",
-                max_output_tokens=4096,
-            )
-
-            return response.get("text", "")
-
-        except Exception as e:
-            logger.error("Gemini Vision OCR failed: %s", e)
-            return ""
+        note_cloud_ocr_blocked("portal.document_processing.DocumentOCR._gemini_vision_ocr")
+        return ""
 
 
 class ExpiryDetector:

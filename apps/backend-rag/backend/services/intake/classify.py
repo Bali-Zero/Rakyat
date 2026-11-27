@@ -13,11 +13,9 @@ Two responsibilities, local by default (Symbiosis Law 2 / UU-PDP):
 OCR provider contract
 ---------------------
 Default runtime is strict local: ``INTAKE_OCR_PROVIDER`` unset -> Ollama
-``qwen2.5vl:7b`` on localhost. Gemini OCR is opt-in only:
-``INTAKE_OCR_PROVIDER=gemini`` AND ``OCR_ALLOW_CLOUD_VISION=true``. If either
-condition is absent, the document image is not sent to cloud OCR. If Gemini is
-enabled but returns no usable text or errors, the path falls back to the local
-Ollama cascade below.
+``qwen2.5vl:7b`` on localhost. Cloud Gemini OCR was removed (owner order
+2026-11-27): a legacy ``INTAKE_OCR_PROVIDER=gemini*`` value fails closed to the
+local Ollama cascade and records one blocked-cloud audit signal per page.
 
 ``INTAKE_OCR_PROVIDER=apple_vision`` (aliases ``apple-vision``, ``vision``) makes
 Apple Vision the primary engine on a macOS host: on-device, nothing leaves the
@@ -79,7 +77,6 @@ from typing import Any
 import asyncpg
 import httpx
 
-from backend.llm.config import ModelName
 from backend.services.intake import apple_vision_ocr
 from backend.services.intake.inference_runtime import (
     ollama_inference_slot,
@@ -107,18 +104,8 @@ _OCR_PRIMARY_DEFAULT = "qwen2.5vl:7b"  # ocr_vision role
 _OCR_FALLBACK = "qwen2.5vl:7b"
 
 OLLAMA_URL = os.getenv("INTAKE_OLLAMA_URL", os.getenv("OLLAMA_URL", "http://localhost:11434"))
-_GEMINI_OCR_MODEL = os.getenv("INTAKE_GEMINI_OCR_MODEL", ModelName.FALLBACK)
-_GEMINI_OCR_AUTH_FAILED = False
-_GEMINI_OCR_AUTH_ERROR_MARKERS = (
-    "401",
-    "403",
-    "api key",
-    "api_key",
-    "forbidden",
-    "permission_denied",
-    "reported as leaked",
-    "unauthorized",
-)
+# Legacy values of INTAKE_OCR_PROVIDER that used to select cloud Gemini OCR.
+_LEGACY_CLOUD_OCR_PROVIDERS = frozenset({"gemini", "gemini_first", "gemini-first"})
 
 # Per-page hard cap. CLAUDE.md OCR rule: 120s for >3 pages -- but we OCR one page
 # per request, so this is the single-page ceiling (reasoning VLM is slow).
@@ -180,24 +167,11 @@ def _ocr_max_image_dim() -> int:
 def _ocr_provider() -> str:
     """Return the configured OCR primary provider; fail closed to local Ollama."""
     provider = os.getenv("INTAKE_OCR_PROVIDER", "ollama").strip().lower()
-    if provider in {"gemini", "gemini_first", "gemini-first"}:
-        return "gemini"
     if provider in {"apple_vision", "apple-vision", "vision"}:
         return "apple_vision"
+    if provider in _LEGACY_CLOUD_OCR_PROVIDERS:
+        logger.warning("INTAKE_OCR_PROVIDER=%s: cloud Gemini OCR is retired; using local ollama", provider)
     return "ollama"
-
-
-def _is_gemini_auth_error(exc: Exception) -> bool:
-    """Return True for Gemini failures that should stop repeat cloud attempts."""
-    text = f"{type(exc).__name__}: {exc!r}".casefold()
-    return any(marker in text for marker in _GEMINI_OCR_AUTH_ERROR_MARKERS)
-
-
-def _cloud_vision_allowed() -> bool:
-    """Lazy wrapper for tests and fail-closed cloud OCR gating."""
-    from backend.services.multimodal.cloud_vision_gate import cloud_vision_allowed
-
-    return cloud_vision_allowed()
 
 
 def _note_cloud_ocr_blocked(context: str) -> None:
@@ -342,32 +316,6 @@ async def _ollama_vision(
     )
 
 
-async def _gemini_vision(
-    png_b64: str,
-    prompt: str = _OCR_PROMPT,
-    num_predict: int | None = None,
-) -> str:
-    """Single gated Gemini Vision OCR call through the shared GenAI client."""
-    from backend.llm.genai_client import get_genai_client
-
-    client = get_genai_client()
-    if not getattr(client, "is_available", False):
-        return ""
-
-    result = await client.generate_content(
-        contents=[
-            {"text": prompt},
-            {"inline_data": {"mime_type": "image/png", "data": png_b64}},
-        ],
-        model=_GEMINI_OCR_MODEL,
-        max_output_tokens=num_predict if num_predict is not None else _ocr_num_predict(),
-        temperature=0.0,
-        timeout_ms=int(OCR_PAGE_TIMEOUT_SECONDS * 1000),
-        endpoint="intake_ocr",
-    )
-    return _clean_ocr_response((result or {}).get("text") or "")
-
-
 def _heuristic_confidence(text: str) -> float:
     """Confidence for OCR text: length + low [unreadable] density. 0.0 if empty."""
     if not text:
@@ -496,14 +444,12 @@ async def ocr_pages(pages: list[Any]) -> list[dict[str, Any]]:
 
     Returns (per page):
         {"page": int, "text": str, "confidence": float, "model": str,
-         "via": "textlayer"|"apple_vision"|"gemini"|"response"|"thinking"|"fallback"|"empty"}
+         "via": "textlayer"|"apple_vision"|"response"|"thinking"|"fallback"|"empty"}
 
     Anti-hallucination: a page the model cannot read yields text="" and
     confidence 0.0 -- never invented content. The persistent client is reused
     across pages (Golden Rule #10).
     """
-    global _GEMINI_OCR_AUTH_FAILED
-
     primary = _resolve_ocr_model()
     results: list[dict[str, Any]] = []
     unreachable_pages = 0
@@ -547,30 +493,13 @@ async def ocr_pages(pages: list[Any]) -> list[dict[str, Any]]:
             if apple_text:
                 text, via, model_used = apple_text, "apple_vision", _APPLE_VISION_MODEL
 
-        # The Ollama/Gemini payload is only needed when nobody has read the page yet.
+        # The Ollama payload is only needed when nobody has read the page yet.
         b64 = "" if text else base64.b64encode(_ensure_min_size(png)).decode("ascii")
 
-        # Optional cloud OCR primary. This is disabled by default and requires
-        # both INTAKE_OCR_PROVIDER=gemini and the shared cloud vision gate.
-        if _ocr_provider() == "gemini" and not _GEMINI_OCR_AUTH_FAILED:
-            if _cloud_vision_allowed():
-                try:
-                    resp = await asyncio.wait_for(
-                        _gemini_vision(b64),
-                        timeout=OCR_PAGE_TIMEOUT_SECONDS,
-                    )
-                    resp = _clean_ocr_response(resp)
-                    if resp:
-                        text, via, model_used = resp, "gemini", _GEMINI_OCR_MODEL
-                except Exception as exc:
-                    logger.warning("OCR Gemini primary failed on page %d: %r", idx, exc)
-                    if _is_gemini_auth_error(exc):
-                        _GEMINI_OCR_AUTH_FAILED = True
-                        logger.error(
-                            "OCR Gemini primary disabled for this worker after auth failure"
-                        )
-            else:
-                _note_cloud_ocr_blocked("intake.classify.ocr_pages")
+        # Legacy INTAKE_OCR_PROVIDER=gemini* fail-closed audit signal: cloud Gemini OCR
+        # is permanently disabled; the page proceeds to the local Ollama cascade.
+        if not text and os.getenv("INTAKE_OCR_PROVIDER", "").strip().lower() in _LEGACY_CLOUD_OCR_PROVIDERS:
+            _note_cloud_ocr_blocked("intake.classify.ocr_pages")
 
         # (a) resolved primary: prefer response, salvage thinking (no-op for
         # non-reasoning VLMs like qwen2.5vl).

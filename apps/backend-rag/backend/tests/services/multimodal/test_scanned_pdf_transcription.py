@@ -144,10 +144,7 @@ def test_total_failure_returns_none_rather_than_an_error_string(monkeypatch, sca
 
 
 def test_the_sovereignty_gate_still_governs_the_cloud_fallback(monkeypatch, scanned_pdf):
-    """Ollama silent + cloud gate shut must degrade to None, never to a cloud call."""
-    from backend.services.multimodal import cloud_vision_gate
-
-    monkeypatch.setattr(cloud_vision_gate, "cloud_vision_allowed", lambda: False)
+    """Ollama silent + cloud permanently disabled must degrade to None, never to a cloud call."""
     service = PDFVisionService()
 
     async def silent_ollama(prompt, image_base64):

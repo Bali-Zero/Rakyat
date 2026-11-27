@@ -195,18 +195,17 @@ class PDFVisionService:
                     os.remove(local_path)
                 return result
 
-            # 5. Fallback to Gemini Vision
-            # ⚠️ UU PDP COMPLIANCE: This sends document images to Google servers (cross-border transfer)
-            # Art. 56 requires safeguards for cross-border data transfer
+            # 5. Cloud Gemini Vision is permanently disabled (UU PDP Art. 56): the
+            # call below only records the blocked fallback and returns None.
             logger.warning(
-                "⚠️ [CROSS-BORDER] Ollama local OCR failed, falling back to Gemini API for %s p.%s. Document image will be sent to Google servers.",
+                "Ollama local OCR failed for %s p.%s; cloud Gemini Vision fallback is permanently disabled.",
                 local_path,
                 page_number,
             )
             result = await self._analyze_via_gemini(prompt, image_base64)
             if result:
                 logger.info(
-                    "👁️ Vision analysis complete via Gemini (CROSS-BORDER) for %s p.%s",
+                    "👁️ Vision analysis complete via fallback for %s p.%s",
                     local_path,
                     page_number,
                 )
@@ -501,41 +500,11 @@ class PDFVisionService:
             return None
 
     async def _analyze_via_gemini(self, prompt: str, image_base64: str) -> str | None:
-        """Fallback: Analyze image using Gemini Vision API.
+        """Permanently disabled cloud Gemini Vision fallback (local Ollama only)."""
+        from backend.services.multimodal.cloud_vision_gate import note_cloud_ocr_blocked
 
-        PII-sovereignty gated: this sends the document image to Google (cross-border,
-        UU PDP Art. 56 / SYMBIOSIS Law 2). Blocked unless OCR_ALLOW_CLOUD_VISION=true
-        (default false). When blocked, returns None so the caller degrades locally.
-        """
-        from backend.services.multimodal.cloud_vision_gate import (
-            cloud_vision_allowed,
-            note_cloud_ocr_blocked,
-        )
-
-        if not cloud_vision_allowed():
-            note_cloud_ocr_blocked("pdf_vision_service._analyze_via_gemini")
-            return None
-        try:
-            client = self._get_genai_client()
-            if not client or not client.is_available:
-                return None
-
-            contents = [
-                {"text": prompt},
-                {"inline_data": {"mime_type": "image/png", "data": image_base64}},
-            ]
-
-            result = await client.generate_content(
-                contents=contents,
-                model=self.model_name,
-                max_output_tokens=8192,
-            )
-
-            return result.get("text") if result else None
-
-        except Exception as e:
-            logger.warning("Gemini vision error: %s", e)
-            return None
+        note_cloud_ocr_blocked("pdf_vision_service._analyze_via_gemini")
+        return None
 
     def _render_page_to_image(self, pdf_path: str, page_number: int) -> Image.Image:
         """Converte pagina PDF in PIL Image"""

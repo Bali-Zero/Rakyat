@@ -1,8 +1,7 @@
 """PII-sovereignty gate behavior at every cloud-vision OCR chokepoint.
 
 SYMBIOSIS Law 2 / UU PDP Art. 56: when local Ollama OCR is unavailable, NO
-chokepoint may send a document image to Google Gemini Vision unless
-OCR_ALLOW_CLOUD_VISION=true. This file exercises the *secondary* chokepoints
+chokepoint may send a document image to Google Gemini Vision (cloud Gemini OCR is permanently disabled). This file exercises the *secondary* chokepoints
 discovered after the first two (pdf_vision_service + crm_enhanced, covered in
 their own test files):
 
@@ -32,10 +31,6 @@ class TestDocumentProcessingGeminiOcr:
         )
         with (
             patch(
-                "backend.services.multimodal.cloud_vision_gate.cloud_vision_allowed",
-                return_value=False,
-            ),
-            patch(
                 "backend.services.multimodal.cloud_vision_gate.note_cloud_ocr_blocked",
             ) as note,
         ):
@@ -55,10 +50,6 @@ class TestVisionRagGeminiFallback:
             side_effect=AssertionError("client must NOT be built when blocked")
         )
         with (
-            patch(
-                "backend.services.multimodal.cloud_vision_gate.cloud_vision_allowed",
-                return_value=False,
-            ),
             patch(
                 "backend.services.multimodal.cloud_vision_gate.note_cloud_ocr_blocked",
             ) as note,
@@ -91,10 +82,6 @@ class TestCrmClientsDocumentsPassportPreview:
         with (
             # Force the local `import httpx` Ollama call to fail → cloud branch taken.
             patch.object(httpx.AsyncClient, "post", new=AsyncMock(side_effect=_boom_post)),
-            patch(
-                "backend.services.multimodal.cloud_vision_gate.cloud_vision_allowed",
-                return_value=False,
-            ),
             patch(
                 "backend.services.multimodal.cloud_vision_gate.note_cloud_ocr_blocked",
             ) as note,

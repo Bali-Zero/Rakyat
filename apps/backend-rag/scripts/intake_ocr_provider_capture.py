@@ -9,8 +9,8 @@ Input manifest JSONL rows:
     "expected_fields": {"field": "expected value"}
   }
 
-The output is compatible with scripts/intake_ocr_quality_eval.py. Gemini is
-opt-in and still requires the backend cloud-vision gate.
+The output is compatible with scripts/intake_ocr_quality_eval.py. Local providers
+only (cloud Gemini OCR was removed).
 """
 
 from __future__ import annotations
@@ -100,15 +100,10 @@ def _unique(values: list[Any]) -> list[str]:
     return ordered
 
 
-_LOCAL_OCR_VIAS = {"response", "thinking", "fallback"}
-
-
 def _provider_error(provider: str, ocr_text: str, vias: list[str]) -> str | None:
     """Return a benchmark-visible provider failure marker, if any."""
     if not ocr_text:
         return "empty_ocr_text"
-    if provider == "gemini" and "gemini" not in vias and any(via in _LOCAL_OCR_VIAS for via in vias):
-        return "provider_fallback_to_local_ocr"
     return None
 
 
@@ -178,16 +173,10 @@ async def capture_samples(
     return results
 
 
-def _configure_provider(provider: str, *, allow_cloud_vision: bool) -> None:
-    if provider == "ollama":
-        os.environ["INTAKE_OCR_PROVIDER"] = "ollama"
-        return
-    if provider != "gemini":
+def _configure_provider(provider: str) -> None:
+    if provider not in {"ollama", "apple_vision"}:
         raise ValueError(f"unsupported provider: {provider}")
-    if not allow_cloud_vision:
-        raise ValueError("provider gemini requires --allow-cloud-vision")
-    os.environ["INTAKE_OCR_PROVIDER"] = "gemini"
-    os.environ["OCR_ALLOW_CLOUD_VISION"] = "true"
+    os.environ["INTAKE_OCR_PROVIDER"] = provider
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -206,21 +195,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--provider",
-        choices=("ollama", "gemini"),
         default="ollama",
-        help="OCR provider to benchmark. Gemini additionally requires --allow-cloud-vision.",
-    )
-    parser.add_argument(
-        "--allow-cloud-vision",
-        action="store_true",
-        help="Permit Gemini cloud OCR for explicitly authorized non-PII samples.",
+        help="Local OCR provider to benchmark: ollama or apple_vision.",
     )
     return parser
 
 
 async def _amain(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    _configure_provider(args.provider, allow_cloud_vision=args.allow_cloud_vision)
+    _configure_provider(args.provider)
     samples = load_manifest(args.manifest)
     await capture_samples(samples, provider=args.provider, output_path=args.output)
     return 0

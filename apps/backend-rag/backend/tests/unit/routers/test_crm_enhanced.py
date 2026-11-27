@@ -1068,7 +1068,7 @@ class TestDeleteFamilyMember:
 class TestGeminiOcrPIIGate:
     """PII sovereignty (SYMBIOSIS Law 2 / UU PDP Art. 56): when local Ollama OCR
     is unavailable, the Gemini CLI + API fallbacks must be BLOCKED unless
-    OCR_ALLOW_CLOUD_VISION=true — the document image must not cross the border."""
+    ever (cloud Gemini OCR is permanently disabled) — the document image must not cross the border."""
 
     @pytest.mark.asyncio
     async def test_blocked_raises_before_any_cloud_tier(self) -> None:
@@ -1082,10 +1082,6 @@ class TestGeminiOcrPIIGate:
             patch(
                 "backend.llm.ollama_client.is_ollama_available",
                 new=AsyncMock(return_value=False),
-            ),
-            patch(
-                "backend.services.multimodal.cloud_vision_gate.cloud_vision_allowed",
-                return_value=False,
             ),
             patch(
                 "backend.services.multimodal.cloud_vision_gate.note_cloud_ocr_blocked",
@@ -1114,7 +1110,6 @@ class TestGeminiOcrPIIGate:
             patch.object(processing, "_image_for_vision", return_value=(b"image", "image/jpeg")),
             patch("backend.app.routers.documents_proxy.assert_drive_file_belongs_to_client", AsyncMock()),
             patch("backend.llm.ollama_client.is_ollama_available", AsyncMock(return_value=False)),
-            patch("backend.services.multimodal.cloud_vision_gate.cloud_vision_allowed", return_value=False),
             patch.object(processing.jobs, "finish", AsyncMock(return_value="deferred")) as finish,
         ):
             result = await _auto_ocr_passport(mock_db_pool, 42, "file-1", 5)
