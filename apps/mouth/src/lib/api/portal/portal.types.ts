@@ -191,6 +191,9 @@ export interface PortalMessage {
   practiceName?: string;
   createdAt: string;
   readAt?: string;
+  /** An automatic notification (profile or status change, new document),
+   *  not a person writing. API field `is_system` (DAI-217). */
+  isSystem?: boolean;
 }
 
 export interface MessagesResponse {
