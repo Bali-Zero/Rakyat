@@ -518,6 +518,213 @@ describe("Final delivery", () => {
     expect(complete).not.toHaveBeenCalled();
   });
 
+  describe("a November practice completed before Final delivery", () => {
+    const legacy = (extras: Record<string, unknown> = {}) => ({
+      ...initial,
+      status: "completed",
+      legacy_proof: true,
+      bonus_instruction: "upload_or_waive",
+      slots: [
+        slot("electronic_visa", "Electronic Visa", {
+          condition: "if issued online",
+          can_repair: true,
+        }),
+        slot("itk", "ITK — Visit Stay Permit", { can_repair: true }),
+      ],
+      ...extras,
+    });
+    it("offers every empty document, asks for the issue date and tells how the bonus is recorded", async () => {
+      requests.get.mockResolvedValue(legacy());
+      requests.post.mockResolvedValue(legacy());
+      const { user, complete } = setup();
+      expect(
+        await screen.findByText(
+          "Upload the E-visa, or mark it not applicable before uploading another document, to record the bonus.",
+        ),
+      ).toBeVisible();
+      expect(screen.getByLabelText("Upload ITK")).toBeEnabled();
+      expect(
+        screen.queryByRole("button", { name: "Complete practice" }),
+      ).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Mark as not applicable" }),
+      ).toBeVisible();
+      const visa = screen.getByLabelText("Upload E-visa");
+      expect(visa).toBeDisabled();
+      fireEvent.change(screen.getByLabelText("Electronic Visa issue date"), {
+        target: { value: workDayOf() },
+      });
+      await user.upload(
+        visa,
+        new File(["%PDF-1.7"], "evisa.pdf", { type: "application/pdf" }),
+      );
+      await waitFor(() =>
+        expect(requests.post).toHaveBeenCalledWith(
+          base + "/slots/electronic_visa/repair",
+          expect.objectContaining({
+            file_name: "evisa.pdf",
+            issued_on: workDayOf(),
+          }),
+        ),
+      );
+      expect(complete).not.toHaveBeenCalled();
+    });
+    it("saves the document titles of a cohort custom practice", async () => {
+      const unnamed = legacy({
+        needs_titles: true,
+        bonus_slot: null,
+        bonus_instruction: null,
+        slots: [],
+      });
+      requests.get.mockResolvedValue(unnamed);
+      requests.post.mockResolvedValue(
+        legacy({
+          bonus_slot: null,
+          bonus_instruction: null,
+          slots: [
+            slot("custom_1", "Deed", { can_repair: true }),
+            slot("custom_2", "Receipt", { can_repair: true }),
+          ],
+        }),
+      );
+      const { user } = setup();
+      await user.type(
+        await screen.findByLabelText(
+          "Agreed final documents, one title per line",
+        ),
+        "Deed{Enter}Receipt",
+      );
+      await user.click(
+        screen.getByRole("button", { name: "Save document titles" }),
+      );
+      await waitFor(() =>
+        expect(requests.post).toHaveBeenCalledWith(base + "/titles", {
+          titles: ["Deed", "Receipt"],
+        }),
+      );
+      expect(await screen.findByText("Document titles saved.")).toBeVisible();
+      expect(screen.getByLabelText("Upload Deed")).toBeEnabled();
+      expect(screen.getByLabelText("Upload Receipt")).toBeEnabled();
+    });
+    it("saves the waiver of a cohort conditional document", async () => {
+      requests.get.mockResolvedValue(legacy());
+      requests.post.mockResolvedValue(
+        legacy({
+          bonus_instruction: null,
+          slots: [
+            slot("electronic_visa", "Electronic Visa", {
+              condition: "if issued online",
+              waiver_reason: "Issued at the border",
+            }),
+            slot("itk", "ITK — Visit Stay Permit", { can_repair: true }),
+          ],
+        }),
+      );
+      const { user } = setup();
+      await user.click(
+        await screen.findByRole("button", { name: "Mark as not applicable" }),
+      );
+      await user.type(
+        screen.getByLabelText("Reason this requirement does not apply"),
+        "Issued at the border",
+      );
+      await user.click(screen.getByRole("button", { name: "Save reason" }));
+      await waitFor(() =>
+        expect(requests.post).toHaveBeenCalledWith(
+          base + "/slots/electronic_visa/waive",
+          { reason: "Issued at the border" },
+        ),
+      );
+      expect(await screen.findByText("Requirement updated.")).toBeVisible();
+      expect(await screen.findByText("Not applicable")).toBeVisible();
+      expect(screen.queryByText(/to record the bonus/)).toBeNull();
+    });
+    it.each([
+      {
+        day: 30,
+        extras: { can_postpone: true, status: "overdue" },
+        open: "Client has not entered · postpone once",
+        label: "Private staff note about the client’s entry",
+        send: /Confirm postponement/,
+        action: "postpone",
+        done: "Postponement recorded.",
+      },
+      {
+        day: 60,
+        extras: {
+          can_postpone: false,
+          can_escalate: true,
+          status: "escalation_due",
+        },
+        open: "Prepare official email to Zero",
+        label: "Note to Zero about the missing permit",
+        send: "Confirm and send email to Zero",
+        action: "escalate",
+        done: "Escalation status updated.",
+      },
+    ])(
+      "manages the permit follow-up of a cohort practice at day $day",
+      async ({ extras, open, label, send, action, done }) => {
+        const tracked = { ...followup, ...extras };
+        requests.get.mockResolvedValue(
+          legacy({
+            bonus_instruction: null,
+            visa_followup: tracked,
+            slots: [
+              slot("electronic_visa", "Electronic Visa", { document_id: 71 }),
+              slot("itk", "ITK — Visit Stay Permit", { can_repair: true }),
+            ],
+          }),
+        );
+        requests.post.mockResolvedValue({
+          ...tracked,
+          status: "awaiting_permit",
+        });
+        const { user } = setup();
+        await user.click(await screen.findByRole("button", { name: open }));
+        await user.type(screen.getByLabelText(label), "Client is abroad.");
+        await user.click(screen.getByRole("button", { name: send }));
+        await waitFor(() =>
+          expect(requests.post).toHaveBeenCalledWith(
+            `${base}/visa-followup/${action}`,
+            { note: "Client is abroad." },
+          ),
+        );
+        expect(await screen.findByText(done)).toBeVisible();
+      },
+    );
+    it("says the bonus document is required once the waiver can no longer help, and says nothing otherwise", async () => {
+      requests.get.mockResolvedValue(legacy({ bonus_instruction: "upload" }));
+      setup();
+      expect(
+        await screen.findByText("The E-visa is required to record the bonus."),
+      ).toBeVisible();
+      cleanup();
+      requests.get.mockResolvedValue(legacy({ bonus_instruction: null }));
+      setup();
+      await screen.findByLabelText("Upload ITK");
+      expect(screen.queryByText(/to record the bonus/)).toBeNull();
+      expect(screen.queryByText(/is required to record/)).toBeNull();
+    });
+    it("shows no upload on a completed practice outside the cohort or to a view-only user", async () => {
+      requests.get.mockResolvedValue(
+        legacy({
+          legacy_proof: false,
+          bonus_instruction: null,
+          slots: [slot("electronic_visa", "Electronic Visa")],
+        }),
+      );
+      setup();
+      await screen.findByText("E-visa");
+      expect(screen.queryByLabelText("Upload E-visa")).toBeNull();
+      cleanup();
+      requests.get.mockResolvedValue(legacy());
+      setup("paid", false);
+      await screen.findByText("View-only access");
+      expect(screen.queryByLabelText("Upload ITK")).toBeNull();
+    });
+  });
+
   it("records a private not-entered note once against the original 60-day deadline", async () => {
     requests.get.mockResolvedValue({ ...initial, visa_followup: followup });
     const note = "Client confirmed entry is still pending.";

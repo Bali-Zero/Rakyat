@@ -61,6 +61,7 @@ def writes(monkeypatch):
         "record_delivery_bonus",
         "get_followup",
         "record_visa_milestone",
+        "legacy_cohort",  # these cases are about the ordinary paths; the cohort has its own pg suite
     ):
         mocks[name] = AsyncMock(return_value=None)
         monkeypatch.setattr(service, name, mocks[name])

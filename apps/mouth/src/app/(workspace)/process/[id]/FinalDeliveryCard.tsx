@@ -44,7 +44,18 @@ interface Delivery {
     | null;
   visa_followup?: VisaFollowup | null;
   needs_titles: boolean;
+  // A November practice completed before Final delivery: it takes every empty document.
+  legacy_proof?: boolean;
+  bonus_instruction?: "upload" | "upload_or_waive" | null;
   slots: Slot[];
+}
+
+function bonusInstruction(data: Delivery, kind: "upload" | "upload_or_waive") {
+  const slot = data.slots.find((s) => s.key === data.bonus_slot);
+  const label = slot ? deliveryDocumentTitle(slot) : "required document";
+  return kind === "upload_or_waive"
+    ? `Upload the ${label}, or mark it not applicable before uploading another document, to record the bonus.`
+    : `The ${label} is required to record the bonus.`;
 }
 
 const actionStyle =
@@ -122,6 +133,11 @@ function StaffDeliveryCard({
     practice.can_manage_delivery === true &&
     data?.status === "on_process" &&
     practice.payment_status === "paid";
+  const legacyOpen =
+    practice.can_manage_delivery === true &&
+    data?.status === "completed" &&
+    data.legacy_proof === true;
+  const staffEdit = writable || legacyOpen;
   const visaDateSlot = data?.bonus_slot === "electronic_visa";
   const missingSlots =
     data?.slots.filter(
@@ -151,7 +167,13 @@ function StaffDeliveryCard({
     message: string,
     repairSlot?: Slot,
   ) {
-    if (pending.current || !(writable || repairable(repairSlot))) return;
+    // An upload is authorised by its own slot; the titles and waiver forms of a cohort
+    // practice carry no slot and are authorised by the staff-edit permission.
+    const allowed =
+      writable ||
+      repairable(repairSlot) ||
+      (legacyOpen && repairSlot === undefined);
+    if (pending.current || !allowed) return;
     pending.current = true;
     setWorking(true);
     setFailure("");
@@ -225,7 +247,7 @@ function StaffDeliveryCard({
               : {}),
           },
         ),
-      repairable(slot)
+      repairable(slot) && !legacyOpen
         ? "Missing permit restored."
         : slot.key === data?.bonus_slot
           ? `${visaDateSlot ? "Electronic Visa" : "Renewed IMK"} upload recorded.`
@@ -249,7 +271,10 @@ function StaffDeliveryCard({
         : action === "confirm-receipt"
           ? "Existing email receipt recorded."
           : "Escalation status updated.",
-      data.slots.find((s) => s.key === data.visa_followup?.slot_key),
+      // A cohort practice is authorised by staff-edit; the server judges each action.
+      legacyOpen
+        ? undefined
+        : data.slots.find((s) => s.key === data.visa_followup?.slot_key),
     );
   }
 
@@ -282,7 +307,7 @@ function StaffDeliveryCard({
           {practice.can_manage_delivery === false && (
             <p className={styles.hint}>View-only access</p>
           )}
-          {writable && data.needs_titles && (
+          {staffEdit && data.needs_titles && (
             <form
               className={styles.custom}
               onSubmit={(event) => {
@@ -326,11 +351,13 @@ function StaffDeliveryCard({
                   working ||
                   !canUpload ||
                   (needsIssueDate(slot) && !validIssueDate);
-                const action = repairable(slot)
-                  ? "Restore"
-                  : saved
-                    ? "Replace"
-                    : "Upload";
+                const action = legacyOpen
+                  ? "Upload"
+                  : repairable(slot)
+                    ? "Restore"
+                    : saved
+                      ? "Replace"
+                      : "Upload";
                 const timing = slot.label.split(" · ").slice(1).join(" · ");
                 return (
                   <li
@@ -418,7 +445,7 @@ function StaffDeliveryCard({
                           </time>
                         </p>
                       )}
-                      {writable && needsIssueDate(slot) && (
+                      {editable && needsIssueDate(slot) && (
                         <div className={styles.issueDate}>
                           <label htmlFor={`${controlId}-issue-date`}>
                             Electronic Visa issue date
@@ -451,7 +478,7 @@ function StaffDeliveryCard({
                           practiceId={practice.id}
                           value={data.visa_followup}
                           busy={working}
-                          writable={Boolean(writable)}
+                          writable={staffEdit}
                           act={followupAction}
                         />
                       )}
@@ -477,7 +504,7 @@ function StaffDeliveryCard({
                             Confirm the existing permit covers both documents
                           </button>
                         )}
-                      {writable &&
+                      {staffEdit &&
                         slot.condition &&
                         !saved &&
                         !waived &&
@@ -537,6 +564,11 @@ function StaffDeliveryCard({
           {(data.bonus_status === "no_bonus" ||
             (data.bonus_rate === 0 && !data.bonus_status)) && (
             <p className={styles.hint}>This service carries no bonus.</p>
+          )}
+          {legacyOpen && data.bonus_instruction && (
+            <p className={styles.hint}>
+              {bonusInstruction(data, data.bonus_instruction)}
+            </p>
           )}
           {data.bonus_status === "forfeited" && (
             <p className={styles.hint}>
