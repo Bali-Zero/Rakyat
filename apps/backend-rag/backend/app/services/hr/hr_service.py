@@ -161,6 +161,12 @@ async def _carry_annual_remainder(conn: Any, year: int, employee_id: int | None 
     await conn.execute(query, *params)
 
 
+# The two-key advisory-lock namespace of leave balances: (HR_LEAVE_LOCK_NS, employee_id).
+# Two-key locks never share keys with one-key locks such as pg_advisory_xact_lock(hashtext(..)),
+# and no other two-key lock in the repository uses this first key.
+HR_LEAVE_LOCK_NS = 742030
+
+
 async def _lock_leave_balances(conn: Any, employee_id: int) -> None:
     """Hold one employee's leave balances until the transaction ends.
 
@@ -170,8 +176,7 @@ async def _lock_leave_balances(conn: Any, employee_id: int) -> None:
     below zero, so this is what keeps two requests from both spending the same days.
     """
     await conn.execute(
-        "SELECT pg_advisory_xact_lock(hashtext('hr_leave_balance:' || $1::int::text))",
-        employee_id,
+        "SELECT pg_advisory_xact_lock($1::int, $2::int)", HR_LEAVE_LOCK_NS, employee_id
     )
 
 
@@ -179,7 +184,7 @@ async def _lock_leave_balances_a_year_opens_from(conn: Any, year: int) -> None:
     """Take _lock_leave_balances for every employee `year` opens from, in id order."""
     await conn.execute(
         """
-        SELECT pg_advisory_xact_lock(hashtext('hr_leave_balance:' || prior.employee_id::text))
+        SELECT pg_advisory_xact_lock($2::int, prior.employee_id)
         FROM (
             SELECT DISTINCT employee_id FROM hr_leave_balances
             WHERE balance_year = $1::int - 1
@@ -187,6 +192,7 @@ async def _lock_leave_balances_a_year_opens_from(conn: Any, year: int) -> None:
         ) AS prior
         """,
         year,
+        HR_LEAVE_LOCK_NS,
     )
 
 
