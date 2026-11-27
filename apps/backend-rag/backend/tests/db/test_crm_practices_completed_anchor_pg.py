@@ -8,8 +8,10 @@ its write; the PATCH must then refuse instead of overwriting the completed pract
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -21,8 +23,13 @@ from fastapi import HTTPException
 
 from backend.app.routers import crm_practices
 from backend.app.routers.crm_practices import PracticeUpdate
+from backend.db.migration_base import split_migration_sql
 from backend.tests.db.test_invoice_company_production_shape_pg import _SCHEMA_SQL
 
+MIGRATION_356 = (
+    Path(__file__).resolve().parents[2] / "db/migrations_v2/356_practices_invoice_company.sql"
+)
+ADMIN = {"email": "synthetic.admin@example.invalid", "role": "admin"}
 STAFF = {"email": "synthetic.consultant@example.invalid", "role": "consultant"}
 COMPLETED_AT = datetime(2026, 10, 20, 4, tzinfo=UTC)
 NEW_DATE = datetime(2026, 11, 5, 4, tzinfo=UTC)
@@ -44,15 +51,19 @@ async def pool(monkeypatch: pytest.MonkeyPatch):
             dsn, min_size=1, max_size=4, server_settings={"search_path": schema}
         )
         await db.execute(_SCHEMA_SQL)
+        up, _ = split_migration_sql(MIGRATION_356.read_text(encoding="utf-8"))
+        await db.execute(up.replace("public", schema))
         await db.execute(
             "INSERT INTO practice_types (code, name, category, base_price)"
             " VALUES ('ext_b1_voa','Extension','visa_extension',1000000)"
         )
-        await db.execute(
-            "INSERT INTO team_members (email, active, role) VALUES ($1, true, $2)",
-            STAFF["email"],
-            STAFF["role"],
-        )
+        for who in (STAFF, ADMIN):
+            await db.execute(
+                "INSERT INTO team_members (email, active, role) VALUES ($1, true, $2)",
+                who["email"],
+                who["role"],
+            )
+        monkeypatch.setenv("PROCESS_VIEW_GRANTS_JSON", json.dumps({ADMIN["email"]: "all"}))
         monkeypatch.setattr(crm_practices, "invalidate_cache", AsyncMock(return_value=0))
         yield db
     finally:
@@ -69,7 +80,9 @@ def quiet_background(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def owned_open_practice(pool: asyncpg.Pool) -> int:
     person = await pool.fetchval(
-        "INSERT INTO clients (full_name, email) VALUES ('Synthetic Person','p@example.invalid') RETURNING id"
+        "INSERT INTO clients (full_name, email, assigned_to)"
+        " VALUES ('Synthetic Person','p@example.invalid',$1) RETURNING id",
+        STAFF["email"],
     )
     return await pool.fetchval(
         """INSERT INTO practices (client_id, practice_type_id, practice_type_code, status,
@@ -81,13 +94,43 @@ async def owned_open_practice(pool: asyncpg.Pool) -> int:
     )
 
 
-async def patch(pool: asyncpg.Pool, practice_id: int, **fields):
+async def patch(pool: asyncpg.Pool, practice_id: int, *, user: dict = STAFF, **fields):
     return await crm_practices.update_practice(
         request=None,
         practice_id=practice_id,
         updates=PracticeUpdate(**fields),
         db_pool=pool,
-        current_user=STAFF,
+        current_user=user,
+    )
+
+
+async def blocked_on(pool: asyncpg.Pool, holder_pid: int, mover: asyncio.Task) -> int:
+    """The pid of a backend blocked by `holder_pid`: it is inside its transaction, waiting on a lock."""
+    for _ in range(100):
+        pid = await pool.fetchval(
+            "SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)) LIMIT 1",
+            holder_pid,
+        )
+        if pid:
+            return pid
+        if mover.done():
+            mover.result()  # surface why it finished without waiting
+        await asyncio.sleep(0.05)
+    pytest.fail("the PATCH never blocked on the row lock")
+
+
+async def advisory_locks(pool: asyncpg.Pool, pid: int) -> int:
+    return await pool.fetchval(
+        "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND granted AND pid=$1", pid
+    )
+
+
+async def linked_company(pool: asyncpg.Pool, practice_id: int) -> int:
+    return await pool.fetchval(
+        """WITH c AS (INSERT INTO companies (company_name) VALUES ('PT Synthetic Lock') RETURNING id)
+           INSERT INTO client_company_links (client_id, company_id)
+           SELECT p.client_id, c.id FROM practices p, c WHERE p.id=$1 RETURNING company_id""",
+        practice_id,
     )
 
 
@@ -121,7 +164,8 @@ async def test_a_completion_committed_after_the_early_read_refuses_the_patch(
     async with pool.acquire() as other:
         txn = await complete_in_open_tx(other, practice_id)
         mover = asyncio.create_task(patch(pool, practice_id, **{field: value}))
-        await asyncio.sleep(0.5)  # the PATCH read the open practice and waits on the row lock
+        # Blocked on the row lock = inside its transaction, after the early unlocked read.
+        await blocked_on(pool, await other.fetchval("SELECT pg_backend_pid()"), mover)
         assert not mover.done()
         await txn.commit()
     with pytest.raises(HTTPException) as caught:
@@ -159,3 +203,44 @@ async def test_a_patch_that_commits_first_on_an_open_practice_is_allowed(
     with pytest.raises(HTTPException) as caught:
         await patch(pool, practice_id, completion_date=NEW_DATE)
     assert caught.value.status_code == 409
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("user", "with_date", "completes"),
+    [
+        (ADMIN, False, False),  # company only, admin
+        (STAFF, False, False),  # company only, non-admin
+        (STAFF, True, False),  # mixed: date + the same company, practice still open
+        (STAFF, True, True),  # mixed, and a completion commits while it waits
+    ],
+)
+async def test_every_patch_locks_the_practice_row_before_the_company_link(
+    pool: asyncpg.Pool, user: dict, with_date: bool, completes: bool
+) -> None:
+    practice_id = await owned_open_practice(pool)
+    company_id = await linked_company(pool, practice_id)
+    fields = {"invoice_company_id": company_id}
+    if with_date:
+        fields["completion_date"] = NEW_DATE
+    async with pool.acquire() as holder:
+        holder_pid = await holder.fetchval("SELECT pg_backend_pid()")
+        txn = await complete_in_open_tx(holder, practice_id) if completes else holder.transaction()
+        if not completes:
+            await txn.start()
+            await holder.fetchval("SELECT id FROM practices WHERE id=$1 FOR UPDATE", practice_id)
+        mover = asyncio.create_task(patch(pool, practice_id, user=user, **fields))
+        waiter = await blocked_on(pool, holder_pid, mover)
+        # The row lock comes first: while it waits for the row it holds no company-link lock.
+        assert await advisory_locks(pool, waiter) == 0
+        await txn.commit()
+    if completes:
+        with pytest.raises(HTTPException) as caught:
+            await mover
+        assert caught.value.status_code == 409
+    else:
+        await mover
+        assert (
+            await pool.fetchval("SELECT invoice_company_id FROM practices WHERE id=$1", practice_id)
+            == company_id
+        )

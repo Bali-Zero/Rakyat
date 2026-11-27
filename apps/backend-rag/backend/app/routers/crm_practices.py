@@ -2073,20 +2073,25 @@ async def update_practice(
             """
 
             async with conn.transaction():
-                if (
+                anchor_gate = (
                     not user_is_admin
                     and {"completion_date", "assigned_to"} & updates.model_fields_set
-                ):
-                    # The gate above ran on a read taken before this transaction: a delivery
-                    # completion may have committed since. Lock the practice row first (the
-                    # order practice_delivery.complete uses) and decide on the LOCKED values.
+                )
+                company_resolves = invoice_company_pos is not None and (
+                    invoice_company_id_in is not None or invoice_company_name_in
+                )
+                if anchor_gate or company_resolves:
+                    # Lock order for every PATCH: the practice row first, then the company link
+                    # (practice_delivery.complete locks the row first too). The gate above ran on
+                    # a read taken before this transaction, so decide on the LOCKED values.
                     locked_anchor = await conn.fetchrow(
                         "SELECT status, completion_date, assigned_to FROM practices"
                         " WHERE id = $1 FOR UPDATE",
                         practice_id,
                     )
                     if (
-                        locked_anchor
+                        anchor_gate
+                        and locked_anchor
                         and normalize_state(locked_anchor["status"] or "") == "completed"
                     ):
                         _refuse_completed_anchor_edit(updates, locked_anchor)
