@@ -36,8 +36,8 @@ MIGRATION = Path(__file__).resolve().parents[2] / "db" / "migrations_v2" / "357_
 MIGRATION_354 = (
     Path(__file__).resolve().parents[2] / "db" / "migrations_v2" / "354_hr_employees_profile.sql"
 )
-MONTH, YEAR = 11, 2026
-AWARDED = datetime(2026, 11, 10, 4, 0, tzinfo=timezone.utc)
+MONTH, YEAR = 10, 2026
+AWARDED = datetime(2026, 10, 10, 4, 0, tzinfo=timezone.utc)
 
 
 def _dsn() -> str:
@@ -154,7 +154,7 @@ async def test_an_approved_month_refuses_bonus_approval_and_manual_insert(env: E
         amount_idr=1,
         reason="other month",
         practice_type_code=None,
-        awarded_on=date(YEAR, 12, 3),
+        awarded_on=date(YEAR, 9, 3),
         created_by="fake.admin@example.com",
     )
     assert other and other["status"] == "pending"

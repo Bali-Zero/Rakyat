@@ -8,8 +8,8 @@ import asyncpg
 from backend.app.services.hr.hr_service import (
     BUSINESS_TZ,
     BonusPeriodLockedError,
-    _lock_payroll_month,
-    _refuse_if_payroll_closed,
+    _lock_bonus_month,
+    _refuse_if_bonus_month_closed,
     payroll_set_sql,
 )
 from backend.services.crm.delivery_catalog import delivery_policy
@@ -47,8 +47,8 @@ async def _write_ledger(
     conn: asyncpg.Connection, event: asyncpg.Record, awarded_at: datetime
 ) -> None:
     local = awarded_at.astimezone(WITA)
-    await _lock_payroll_month(conn, local.month, local.year, exclusive=False)
-    await _refuse_if_payroll_closed(conn, local.month, local.year)
+    await _lock_bonus_month(conn, local.month, local.year, exclusive=False)
+    await _refuse_if_bonus_month_closed(conn, local.month, local.year)
     ledger = await conn.fetchval(
         """
         INSERT INTO hr_bonus_ledger
@@ -196,13 +196,13 @@ async def resolve_delivery_bonus(
     award_date = event["awarded_at"]
     if use_current_period:
         original = award_date.astimezone(WITA)
-        await _lock_payroll_month(conn, original.month, original.year, exclusive=False)
+        await _lock_bonus_month(conn, original.month, original.year, exclusive=False)
         try:
-            await _refuse_if_payroll_closed(conn, original.month, original.year)
+            await _refuse_if_bonus_month_closed(conn, original.month, original.year)
         except BonusPeriodLockedError:
             award_date = datetime.now(WITA)
         else:
-            raise ValueError("The original payroll month is still open")
+            raise ValueError("The original bonus month is still open")
     updated = await conn.fetchrow(
         "UPDATE hr_delivery_bonus_events SET amount_idr=$2, resolved_by=$3, employee_id=$4 WHERE practice_id=$1 RETURNING *",
         practice_id,

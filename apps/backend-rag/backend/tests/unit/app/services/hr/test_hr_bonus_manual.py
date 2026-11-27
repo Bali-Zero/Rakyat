@@ -102,18 +102,29 @@ class TestCreateManualBonus:
     async def test_locked_month_raises_and_inserts_nothing(self, svc, pool):
         conn = pool._conn
         conn.fetchrow = AsyncMock(return_value={"id": 7, "on_payroll": True})
-        conn.fetchval = AsyncMock(return_value="approved")  # the period's status
+        conn.fetchval = AsyncMock(return_value=True)  # hr_bonus_month_closed
         with pytest.raises(BonusPeriodLockedError):
-            await svc.create_manual_bonus(**_args())
+            await svc.create_manual_bonus(**_args(awarded_on=date(2026, 10, 10)))
         assert conn.fetchrow.await_count == 1
-        lock_sql, month, year = conn.fetchval.await_args.args
-        assert "payroll_month" in lock_sql and (month, year) == (11, 2026)
-        # the shared month lock was taken before the status read
+        closed_sql, first_day = conn.fetchval.await_args.args
+        assert "hr_bonus_month_closed" in closed_sql and first_day == date(2026, 10, 1)
+        # the shared month lock was taken before the closure read
         allocation_lock, month_lock = conn.execute.await_args_list
         assert "pg_advisory_xact_lock_shared" in allocation_lock.args[0]
         assert "hr_bonus_payout_allocation" in allocation_lock.args[0]
         assert "pg_advisory_xact_lock_shared" in month_lock.args[0]
-        assert month_lock.args[1] == "hr_payroll_month:2026-11"
+        assert month_lock.args[1] == "hr_payroll_month:2026-10"
+
+    @pytest.mark.asyncio
+    async def test_a_closed_november_run_takes_the_bonus_month_key(self, svc, pool):
+        conn = pool._conn
+        conn.fetchrow = AsyncMock(return_value={"id": 7, "on_payroll": True})
+        conn.fetchval = AsyncMock(return_value=True)
+        with pytest.raises(BonusPeriodLockedError, match="bonus run"):
+            await svc.create_manual_bonus(**_args(awarded_on=date(2026, 11, 10)))
+        _, first_day = conn.fetchval.await_args.args
+        assert first_day == date(2026, 11, 1)
+        assert conn.execute.await_args_list[-1].args[1] == "hr_bonus_month:2026-11"
 
 
 class TestRejectAndDelete:
@@ -240,9 +251,10 @@ class TestPeriodLocks:
     async def test_approve_bonus_in_a_locked_month_raises(self, svc, pool):
         conn = pool._conn
         conn.fetchrow = AsyncMock(return_value={"status": "pending", "m": 11, "y": 2026})
-        conn.fetchval = AsyncMock(return_value="paid")
+        conn.fetchval = AsyncMock(return_value=True)  # hr_bonus_month_closed
         with pytest.raises(BonusPeriodLockedError):
             await svc.approve_bonus(3, "tm-1")
+        assert "hr_bonus_month_closed" in conn.fetchval.await_args.args[0]
         assert conn.fetchrow.await_count == 1  # never reached the UPDATE
         assert "FOR UPDATE" in conn.fetchrow.await_args.args[0]
 

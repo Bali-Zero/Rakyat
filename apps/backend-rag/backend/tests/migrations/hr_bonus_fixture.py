@@ -24,6 +24,7 @@ async def install_delivery_payroll_migrations(conn, *, forfeit_rule: bool = True
         "384_delivery_bonus.sql",
         "385_practice_visa_followups.sql",
         "386_visa_bonus_payout_hold.sql",
+        "393_bonus_run_month_lock.sql",
     ):
         await conn.execute(split_migration_sql((dir_path / name).read_text())[0])
     # The columns and table read by 388's forfeit rule (production has them already).

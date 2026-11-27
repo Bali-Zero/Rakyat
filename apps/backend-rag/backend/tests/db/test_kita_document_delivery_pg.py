@@ -74,6 +74,7 @@ async def pool(monkeypatch):
                 "385_practice_visa_followups.sql",
                 "386_visa_bonus_payout_hold.sql",
                 "388_bonus_rates_forfeit.sql",
+                "393_bonus_run_month_lock.sql",
             ):
                 await conn.execute((folder / filename).read_text().split("-- === ROLLBACK ===")[0])
             await conn.execute("""
