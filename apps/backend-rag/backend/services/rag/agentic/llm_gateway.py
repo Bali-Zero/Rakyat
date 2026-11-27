@@ -83,7 +83,13 @@ _ALLOWED_CLAUDE_MODEL_RE = re.compile(r"^claude-[A-Za-z0-9][A-Za-z0-9._-]{1,63}$
 _MAX_PROMPT_BYTES = 120_000
 
 
-class PromptTooLargeError(ValueError):
+class InvalidPromptError(ValueError):
+    """The prompt itself cannot be sent to the CLI (empty, oversized, embedded
+    NUL byte, or invalid UTF-8). Not a provider failure: it must never count
+    against a model's circuit breaker or trigger fallback."""
+
+
+class PromptTooLargeError(InvalidPromptError):
     """The prompt cannot fit the argv limit even with no history. Not a provider
     failure: it must never count against a model's circuit breaker."""
 
@@ -336,18 +342,29 @@ def _build_claude_prompt(
         sections.append(message)
         return "\n\n".join(sections)
 
+    def _utf8_len(text: str) -> int:
+        try:
+            return len(text.encode("utf-8"))
+        except UnicodeEncodeError as exc:
+            raise InvalidPromptError("prompt contains invalid UTF-8 surrogates") from exc
+
     entries = list(history_entries)
     prompt = _render(entries)
-    while entries and len(prompt.encode("utf-8")) > _MAX_PROMPT_BYTES:
+    while entries and _utf8_len(prompt) > _MAX_PROMPT_BYTES:
         entries.pop(0)
         prompt = _render(entries)
-    if len(prompt.encode("utf-8")) > _MAX_PROMPT_BYTES:
+    prompt_bytes = _utf8_len(prompt)
+    if prompt_bytes > _MAX_PROMPT_BYTES:
         # System prompt, tools and message alone are over the argv limit. Nothing
         # of them is cut (the CRM scope note is a suffix of the message): the call
         # is refused outright instead of failing later with E2BIG.
         raise PromptTooLargeError(
-            f"prompt is {len(prompt.encode('utf-8'))} bytes without history; limit {_MAX_PROMPT_BYTES}"
+            f"prompt is {prompt_bytes} bytes without history; limit {_MAX_PROMPT_BYTES}"
         )
+    if "\x00" in prompt:
+        # Subprocess argv rejects embedded NUL bytes with ValueError at spawn;
+        # reject here before the CLI runs so it never counts as a model strike.
+        raise InvalidPromptError("prompt contains embedded NUL byte")
     return prompt
 
 
@@ -632,6 +649,18 @@ class LLMGateway:
                 completion_tokens=token_usage.completion_tokens,
             )
             return (text_content, model_used, response_obj, token_usage)
+        except InvalidPromptError as e:
+            latency_ms = round((time.perf_counter() - t0) * 1000)
+            logger.warning(
+                "LLM prompt rejected before dispatch (%s)",
+                type(e).__name__,
+                extra={
+                    "tier": tier,
+                    "fallback_depth": query_cost_tracker["depth"],
+                    "latency_ms": latency_ms,
+                },
+            )
+            raise RuntimeError(f"All LLM models failed: {e}") from None
         except Exception as e:
             latency_ms = round((time.perf_counter() - t0) * 1000)
             logger.exception(
@@ -778,10 +807,10 @@ class LLMGateway:
                 logger.debug("LLMGateway: %s response received", model_name)
                 return (text_content, model_name, response, token_usage)
 
-            except PromptTooLargeError:
+            except InvalidPromptError as e:
                 # Same prompt, same refusal on every slug: not a model failure,
                 # so no circuit-breaker strike and no fallback attempt.
-                logger.error("LLMGateway: prompt exceeds the argv limit; call refused")
+                logger.warning("LLMGateway: prompt rejected before CLI (%s)", type(e).__name__)
                 raise
 
             except ClaudeOAuthError as e:
@@ -854,7 +883,7 @@ class LLMGateway:
             tools=effective_tools if use_react_tools else None,
         )
         if not prompt.strip():
-            raise ValueError("Prompt must be non-empty")
+            raise InvalidPromptError("Prompt must be non-empty")
 
         with trace_span(
             "backend.llm.call",
@@ -927,6 +956,13 @@ class LLMGateway:
                 prompt_tokens=max(1, len(prompt) // 4),
                 completion_tokens=max(1, len(usage_basis) // 4),
                 model=model_name,
+            )
+            # Downstream tracers (kg_orchestrator) read the token counts off the
+            # response object under the provider-neutral ``usage_metadata`` name.
+            response_obj.usage_metadata = SimpleNamespace(
+                prompt_token_count=token_usage.prompt_tokens,
+                candidates_token_count=token_usage.completion_tokens,
+                total_token_count=token_usage.total_tokens,
             )
             set_span_attribute("prompt_tokens", token_usage.prompt_tokens)
             set_span_attribute("completion_tokens", token_usage.completion_tokens)

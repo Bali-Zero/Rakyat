@@ -487,6 +487,137 @@ class TestOversizedPromptIsRefusedNotShipped:
         assert len(prompt.encode("utf-8")) <= 120_000
 
 
+class TestInvalidPromptDoesNotTripCircuitBreaker:
+    """Fable gate (PR #1014, round 1, P2): an embedded NUL made the CLI spawn raise
+    ``ValueError`` inside the generic branch, so 5 poisoned messages opened the
+    shared breaker for everyone. A prompt the CLI can never accept is the caller's
+    fault: refused before the CLI, no strike, no fallback, no failure metric."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("use_chat", [False, True], ids=["no_chat", "chat_session"])
+    async def test_nul_byte_leaves_circuit_closed_and_a_clean_followup_is_answered(
+        self, gateway_with_completion, use_chat
+    ):
+        gateway, call = gateway_with_completion
+        chat = gateway.create_chat_with_history([], system_instruction="sys") if use_chat else None
+
+        for _ in range(8):
+            with pytest.raises(RuntimeError, match="All LLM models failed"):
+                await gateway.send_message(
+                    chat=chat, message="hello\x00world", enable_function_calling=False
+                )
+
+        call.assert_not_awaited()
+        assert gateway._is_circuit_open(gateway.model_name_flash) is False
+        if use_chat:
+            assert chat.history == []
+
+        text, _model, _resp, _usage = await gateway.send_message(
+            chat=chat, message="clean question", enable_function_calling=False
+        )
+
+        assert call.await_count == 1
+        assert text == "plain"
+
+    @pytest.mark.asyncio
+    async def test_nul_in_the_system_prompt_or_the_history_is_refused_before_the_cli(
+        self, gateway_with_completion
+    ):
+        from backend.services.rag.agentic.llm_gateway import InvalidPromptError
+
+        gateway, call = gateway_with_completion
+
+        with pytest.raises(InvalidPromptError):
+            await gateway._call_model(
+                "claude-sonnet-5-5",
+                with_tools=False,
+                chat=None,
+                message="hi",
+                _system_prompt="sys\x00tem",
+            )
+        with pytest.raises(InvalidPromptError):
+            await gateway._call_model(
+                "claude-sonnet-5-5",
+                with_tools=False,
+                chat=None,
+                message="hi",
+                conversation_messages=[
+                    {"role": "user", "content": "old\x00turn"},
+                    {"role": "assistant", "content": "reply"},
+                ],
+            )
+
+        call.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("message", ["   ", "bad\ud800text"], ids=["blank", "lone_surrogate"])
+    async def test_blank_and_lone_surrogate_prompts_leave_circuit_closed(
+        self, gateway_with_completion, message
+    ):
+        from backend.services.rag.agentic.llm_gateway import InvalidPromptError
+
+        gateway, call = gateway_with_completion
+
+        with pytest.raises(InvalidPromptError):
+            await gateway._call_model(
+                "claude-sonnet-5-5", with_tools=False, chat=None, message=message
+            )
+        for _ in range(8):
+            with pytest.raises(RuntimeError, match="All LLM models failed"):
+                await gateway.send_message(
+                    chat=None, message=message, enable_function_calling=False
+                )
+
+        call.assert_not_awaited()
+        assert gateway._is_circuit_open(gateway.model_name_flash) is False
+
+        text, _model, _resp, _usage = await gateway.send_message(
+            chat=None, message="clean question", enable_function_calling=False
+        )
+        assert text == "plain"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("message", ["hello\x00world", "x" * 140_000], ids=["nul", "oversize"])
+    async def test_refusal_is_not_counted_as_all_models_failed(
+        self, gateway_with_completion, message
+    ):
+        gateway, call = gateway_with_completion
+
+        with patch(f"{_MODULE}.llm_all_models_failed_total") as failed_metric:
+            with pytest.raises(RuntimeError, match="All LLM models failed"):
+                await gateway.send_message(
+                    chat=None, message=message, enable_function_calling=False
+                )
+
+        failed_metric.inc.assert_not_called()
+        call.assert_not_awaited()
+
+
+class TestResponseObjectCarriesUsageMetadata:
+    """Codex gate (PR #1014, round 1, P3): the KG trace reads
+    ``response_obj.usage_metadata.total_token_count`` and saw 0 tokens."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("structured", [False, True], ids=["plain", "tool_turn"])
+    async def test_usage_metadata_matches_the_returned_token_usage(
+        self, gateway_with_completion, structured
+    ):
+        gateway, call = gateway_with_completion
+        if structured:
+            call.return_value = _turn(
+                _final(None, calls=[{"name": "shared_tool", "arguments_json": "{}"}])
+            )
+
+        _text, response, usage = await gateway._call_model(
+            "claude-sonnet-5-5", with_tools=structured, chat=None, message="hi"
+        )
+
+        meta = response.usage_metadata
+        assert meta.prompt_token_count == usage.prompt_tokens
+        assert meta.candidates_token_count == usage.completion_tokens
+        assert meta.total_token_count == usage.total_tokens > 0
+
+
 class TestDefusalAsksTheLoopsOwnParser:
     """Codex gate (PR #1011, round 2, P1): spelling filters were bypassed by JSON
     escapes and nested fences; the check now asks the parser the loops use."""
