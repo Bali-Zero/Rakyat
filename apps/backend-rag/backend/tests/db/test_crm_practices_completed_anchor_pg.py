@@ -55,7 +55,8 @@ async def pool(monkeypatch: pytest.MonkeyPatch):
         await db.execute(up.replace("public", schema))
         await db.execute(
             "INSERT INTO practice_types (code, name, category, base_price)"
-            " VALUES ('ext_b1_voa','Extension','visa_extension',1000000)"
+            " VALUES ('ext_b1_voa','Extension','visa_extension',1000000),"
+            " ('ext_c1_tourism','Extension','visa_extension',2000000)"
         )
         for who in (STAFF, ADMIN):
             await db.execute(
@@ -87,7 +88,8 @@ async def owned_open_practice(pool: asyncpg.Pool) -> int:
     return await pool.fetchval(
         """INSERT INTO practices (client_id, practice_type_id, practice_type_code, status,
                assigned_to, created_by, quoted_price)
-           SELECT $1, id, code, 'on_process', $2, $2, 1000000 FROM practice_types LIMIT 1
+           SELECT $1, id, code, 'on_process', $2, $2, 1000000 FROM practice_types
+           WHERE code = 'ext_b1_voa'
            RETURNING id""",
         person,
         STAFF["email"],
@@ -154,13 +156,18 @@ async def complete_in_open_tx(other: asyncpg.Connection, practice_id: int):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("field", ["completion_date", "assigned_to"])
+@pytest.mark.parametrize("field", ["completion_date", "assigned_to", "practice_type_code"])
 async def test_a_completion_committed_after_the_early_read_refuses_the_patch(
     pool: asyncpg.Pool, field: str
 ) -> None:
     practice_id = await owned_open_practice(pool)
     before = await activity_rows(pool, practice_id)
-    value = NEW_DATE if field == "completion_date" else "someone.else@example.invalid"
+    value = {
+        "completion_date": NEW_DATE,
+        "assigned_to": "someone.else@example.invalid",
+        # a later proof upload prices the bonus by the current service
+        "practice_type_code": "ext_c1_tourism",
+    }[field]
     async with pool.acquire() as other:
         txn = await complete_in_open_tx(other, practice_id)
         mover = asyncio.create_task(patch(pool, practice_id, **{field: value}))
@@ -172,12 +179,15 @@ async def test_a_completion_committed_after_the_early_read_refuses_the_patch(
         await mover
     assert caught.value.status_code == 409
     row = await pool.fetchrow(
-        "SELECT status, completion_date, assigned_to FROM practices WHERE id=$1", practice_id
+        "SELECT p.status, p.completion_date, p.assigned_to, pt.code AS service FROM practices p"
+        " JOIN practice_types pt ON pt.id = p.practice_type_id WHERE p.id=$1",
+        practice_id,
     )
-    assert (row["status"], row["completion_date"], row["assigned_to"]) == (
+    assert (row["status"], row["completion_date"], row["assigned_to"], row["service"]) == (
         "completed",
         COMPLETED_AT,
         STAFF["email"],
+        "ext_b1_voa",
     )
     assert await activity_rows(pool, practice_id) == before
 

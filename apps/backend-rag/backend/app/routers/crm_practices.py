@@ -438,11 +438,16 @@ def _same_instant(new: datetime | None, old: datetime | None) -> bool:
 
 
 def _same_assignee(new: str | None, old: str | None) -> bool:
-    return (new or "").strip().lower() == (old or "").strip().lower()
+    # The same identity every reader uses (LOWER(BTRIM(...))): BTRIM drops spaces, nothing else.
+    return (new or "").strip(" ").lower() == (old or "").strip(" ").lower()
+
+
+_COMPLETED_ANCHOR_FIELDS = frozenset({"completion_date", "assigned_to", "practice_type_code"})
 
 
 def _refuse_completed_anchor_edit(updates: "PracticeUpdate", old_row: Any) -> None:
-    """A completed practice anchors the delivery bonus: only an admin may move its date or owner."""
+    """A completed practice anchors the delivery bonus: only an admin may move its date or owner,
+    or change its service (a later proof upload prices the bonus by the current service)."""
     fields = updates.model_fields_set
     if "completion_date" in fields and not _same_instant(
         updates.completion_date, old_row.get("completion_date")
@@ -452,6 +457,10 @@ def _refuse_completed_anchor_edit(updates: "PracticeUpdate", old_row: Any) -> No
         updates.assigned_to, old_row.get("assigned_to")
     ):
         changed = "assigned_to"
+    elif "practice_type_code" in fields and updates.practice_type_code != old_row.get(
+        "practice_type_code"
+    ):
+        changed = "practice_type_code"
     else:
         return
     raise HTTPException(
@@ -2073,9 +2082,8 @@ async def update_practice(
             """
 
             async with conn.transaction():
-                anchor_gate = (
-                    not user_is_admin
-                    and {"completion_date", "assigned_to"} & updates.model_fields_set
+                anchor_gate = not user_is_admin and bool(
+                    _COMPLETED_ANCHOR_FIELDS & updates.model_fields_set
                 )
                 company_resolves = invoice_company_pos is not None and (
                     invoice_company_id_in is not None or invoice_company_name_in
@@ -2085,8 +2093,10 @@ async def update_practice(
                     # (practice_delivery.complete locks the row first too). The gate above ran on
                     # a read taken before this transaction, so decide on the LOCKED values.
                     locked_anchor = await conn.fetchrow(
-                        "SELECT status, completion_date, assigned_to FROM practices"
-                        " WHERE id = $1 FOR UPDATE",
+                        "SELECT p.status, p.completion_date, p.assigned_to,"
+                        " pt.code AS practice_type_code FROM practices p"
+                        " LEFT JOIN practice_types pt ON pt.id = p.practice_type_id"
+                        " WHERE p.id = $1 FOR UPDATE OF p",
                         practice_id,
                     )
                     if (
