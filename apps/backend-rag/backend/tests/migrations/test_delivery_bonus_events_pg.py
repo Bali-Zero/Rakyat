@@ -67,6 +67,8 @@ async def test_issuance_pays_once_before_completion_reassignment_cannot_duplicat
     assert issued["earned_at"] == issued["recorded_at"]
     assert issued["evidence_issued_on"] == date(2020, 12, 29)
     assert issued["awarded_at"] == bonus.payroll_award_date(issued["recorded_at"])
+    # The calendar month of the earning is the bonus month: the award instant is the earning instant.
+    assert issued["awarded_at"] == issued["earned_at"]
     assert await db.fetchval("SELECT status FROM practices WHERE id=2") == "on_process"
     assert (await delivery_desk(db, "tm-1"))["next_case"]["already_earned"]
     await db.execute("UPDATE practices SET status='completed' WHERE id=2")

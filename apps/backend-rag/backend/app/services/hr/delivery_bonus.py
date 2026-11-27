@@ -1,6 +1,6 @@
 """Employee bonus receipts. The CRM caller owns the transaction that records issuance or delivery."""
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 import asyncpg
@@ -18,12 +18,11 @@ WITA = ZoneInfo(BUSINESS_TZ)
 
 
 def payroll_award_date(earned_at: datetime) -> datetime:
-    local = earned_at.astimezone(WITA)
-    if local.day <= 28:
-        return local
-    return (
-        local.replace(day=28, hour=0, minute=0, second=0, microsecond=0) + timedelta(days=4)
-    ).replace(day=1)
+    """A bonus belongs to the calendar month (Bali time) in which it is earned, up to its last day.
+
+    Owner rule 2026-11-27: no roll-over after the 28th; an upload on the 29th-31st counts for that month.
+    """
+    return earned_at.astimezone(WITA)
 
 
 async def get_delivery_bonus(conn: asyncpg.Connection, practice_id: int) -> dict | None:
