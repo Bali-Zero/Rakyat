@@ -518,6 +518,207 @@ describe("Final delivery", () => {
     expect(complete).not.toHaveBeenCalled();
   });
 
+  describe("after a response is lost the card claims only what it can prove", () => {
+    const sha256 = async (text: string) =>
+      Array.from(
+        new Uint8Array(
+          await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)),
+        ),
+        (byte) => byte.toString(16).padStart(2, "0"),
+      ).join("");
+    const open = {
+      ...initial,
+      bonus_event: "electronic_visa_issued",
+      slots: [
+        slot("electronic_visa", "Electronic Visa", { document_id: 21 }),
+        slot("itk", "ITK — Visit Stay Permit"),
+      ],
+    };
+    const withItk = (extras: Record<string, unknown>) => ({
+      ...open,
+      slots: [open.slots[0], slot("itk", "ITK — Visit Stay Permit", extras)],
+    });
+    const upload = async (user: ReturnType<typeof setup>["user"]) =>
+      user.upload(
+        await screen.findByLabelText("Upload ITK"),
+        new File(["bytes of A"], "ITK.pdf", { type: "application/pdf" }),
+      );
+
+    it("accepts the refreshed slot only when it holds the very file that was sent", async () => {
+      requests.get.mockResolvedValueOnce(open).mockResolvedValue(
+        withItk({
+          document_id: 40,
+          content_sha256: await sha256("bytes of A"),
+        }),
+      );
+      requests.post.mockRejectedValueOnce(new Error("network lost"));
+      const { user } = setup();
+      await upload(user);
+      expect(await screen.findByText("Document saved.")).toBeVisible();
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
+    it("keeps the error and names the conflict when the slot now holds other bytes under the same name", async () => {
+      requests.get.mockResolvedValueOnce(open).mockResolvedValue(
+        withItk({
+          document_id: 41,
+          file_name: "ITK.pdf",
+          content_sha256: await sha256("bytes of B"),
+        }),
+      );
+      requests.post.mockRejectedValueOnce(
+        new ApiError(
+          "Another operator changed this slot. Refresh and review.",
+          409,
+        ),
+      );
+      const { user } = setup();
+      await upload(user);
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        /Another operator changed this slot.*Another file is now in this slot/,
+      );
+      expect(screen.queryByText("Document saved.")).toBeNull();
+    });
+
+    it("keeps the error when the saved document carries no digest", async () => {
+      requests.get
+        .mockResolvedValueOnce(open)
+        .mockResolvedValue(withItk({ document_id: 42, content_sha256: null }));
+      requests.post.mockRejectedValueOnce(new Error("network lost"));
+      const { user } = setup();
+      await upload(user);
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "network lost",
+      );
+      expect(screen.queryByText("Document saved.")).toBeNull();
+    });
+
+    it("does not call a failed Complete a success unless the practice is completed", async () => {
+      const ready = withItk({ document_id: 43 });
+      requests.get.mockResolvedValue(ready);
+      requests.post.mockRejectedValueOnce(new Error("network lost"));
+      const { user, complete } = setup();
+      await user.click(
+        await screen.findByRole("button", { name: "Complete practice" }),
+      );
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "network lost",
+      );
+      expect(complete).not.toHaveBeenCalled();
+      requests.get.mockResolvedValue({ ...ready, status: "completed" });
+      requests.post.mockRejectedValueOnce(new Error("network lost"));
+      await user.click(
+        await screen.findByRole("button", { name: "Complete practice" }),
+      );
+      await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
+    it("counts a waiver or a combined-permit link as saved only when that slot shows it", async () => {
+      const conditional = slot("filing", "Filing receipt", {
+        condition: "If filing is due",
+      });
+      const waivable = { ...initial, bonus_slot: null, slots: [conditional] };
+      const waivedNow = {
+        ...waivable,
+        slots: [{ ...conditional, waiver_reason: "No filing due" }],
+      };
+      const waive = async (user: ReturnType<typeof setup>["user"]) => {
+        await user.click(
+          await screen.findByRole("button", { name: "Mark as not applicable" }),
+        );
+        await user.type(
+          screen.getByLabelText("Reason this requirement does not apply"),
+          "No filing due",
+        );
+        await user.click(screen.getByRole("button", { name: "Save reason" }));
+      };
+      requests.get.mockResolvedValueOnce(waivable).mockResolvedValue(waivable);
+      requests.post.mockRejectedValueOnce(new Error("network lost"));
+      let { user } = setup();
+      await waive(user);
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "network lost",
+      );
+      cleanup();
+      requests.get.mockResolvedValueOnce(waivable).mockResolvedValue(waivedNow);
+      requests.post.mockRejectedValueOnce(new Error("network lost"));
+      ({ user } = setup());
+      await waive(user);
+      expect(await screen.findByText("Requirement updated.")).toBeVisible();
+      expect(screen.queryByRole("alert")).toBeNull();
+      cleanup();
+      const first = slot("imk", "Renewed IMK", { document_id: 42 });
+      const second = slot("itas", "Renewed e-ITAS", {
+        reusable_document_id: 42,
+      });
+      const linkable = { ...initial, bonus_slot: null, slots: [first, second] };
+      const link = async (u: ReturnType<typeof setup>["user"]) =>
+        u.click(
+          await screen.findByRole("button", {
+            name: "Confirm the existing permit covers both documents",
+          }),
+        );
+      requests.get.mockResolvedValueOnce(linkable).mockResolvedValue(linkable);
+      requests.post.mockRejectedValueOnce(new Error("network lost"));
+      ({ user } = setup());
+      await link(user);
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "network lost",
+      );
+      cleanup();
+      requests.get.mockResolvedValueOnce(linkable).mockResolvedValue({
+        ...linkable,
+        slots: [first, { ...second, document_id: 42 }],
+      });
+      requests.post.mockRejectedValueOnce(new Error("network lost"));
+      ({ user } = setup());
+      await link(user);
+      expect(
+        await screen.findByText("Combined permit linked to both requirements."),
+      ).toBeVisible();
+    });
+
+    it("tells the operator the practice is completed when the upload was the one that completed it", async () => {
+      requests.get.mockResolvedValue(open);
+      requests.post.mockResolvedValueOnce({
+        ...withItk({ document_id: 44 }),
+        status: "completed",
+      });
+      const { user, complete } = setup();
+      await upload(user);
+      expect(
+        await screen.findByText("Document saved. The practice is completed."),
+      ).toBeVisible();
+      expect(complete).toHaveBeenCalledOnce();
+    });
+  });
+
+  it("offers Upload, not Restore, on a delivered practice and says the document was added", async () => {
+    const delivered = {
+      ...initial,
+      status: "completed",
+      delivery_recorded: true,
+      bonus_event: "electronic_visa_issued",
+      slots: [
+        slot("electronic_visa", "Electronic Visa", { document_id: 71 }),
+        slot("itk", "ITK", { can_repair: true }),
+      ],
+    };
+    requests.get.mockResolvedValue(delivered);
+    requests.post.mockResolvedValueOnce({
+      ...delivered,
+      slots: [delivered.slots[0], slot("itk", "ITK", { document_id: 72 })],
+    });
+    const { user } = setup();
+    await user.upload(
+      await screen.findByLabelText("Upload ITK"),
+      new File(["%PDF-1.7"], "ITK.pdf", { type: "application/pdf" }),
+    );
+    expect(await screen.findByText("Document added.")).toBeVisible();
+    expect(screen.queryByLabelText("Restore ITK")).toBeNull();
+  });
+
   describe("a November practice completed before Final delivery", () => {
     const legacy = (extras: Record<string, unknown> = {}) => ({
       ...initial,

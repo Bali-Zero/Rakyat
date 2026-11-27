@@ -55,6 +55,7 @@ async def test_only_new_eligible_positively_priced_event_writes_payroll(
         receipt = {**receipt, "awarded_at": at}
     conn = AsyncMock()
     conn.fetchrow.side_effect = [
+        None,  # the plain read: no receipt yet
         receipt,
         {"event_kind": "electronic_visa_issued", "status": "pending"},
     ]
@@ -70,11 +71,49 @@ async def test_only_new_eligible_positively_priced_event_writes_payroll(
     )
     assert result["event_kind"] == "electronic_visa_issued"
     assert write.await_count == expected_writes
-    insert = conn.fetchrow.await_args_list[0].args
+    insert = conn.fetchrow.await_args_list[1].args
     assert insert[5].date() == datetime.now(bonus.WITA).date()
     assert insert[6] == bonus.payroll_award_date(insert[5])
     assert insert[7] == insert[5].date()
     assert insert[8] == date(2020, 12, 29)
+    assert insert[9] == insert[5]  # recorded_at, which earned_at replaces only when given
+
+
+@pytest.mark.asyncio
+async def test_an_existing_receipt_is_returned_without_an_insert_or_a_ledger_attempt(monkeypatch):
+    conn = AsyncMock()
+    conn.fetchrow.return_value = {"event_kind": "service_delivered", "status": "awaiting_employee"}
+    write = AsyncMock()
+    monkeypatch.setattr(bonus, "_write_ledger", write)
+    result = await bonus.record_delivery_bonus(
+        conn,
+        12,
+        "company_pt_pma",
+        "member@example.invalid",
+        "service_delivered",
+        earned_at=datetime(2026, 11, 30, 3, tzinfo=timezone.utc),
+    )
+    assert result["status"] == "awaiting_employee"
+    assert conn.fetchrow.await_count == 1  # the plain read only
+    assert "INSERT" not in conn.fetchrow.await_args.args[0]
+    conn.execute.assert_not_awaited()
+    write.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_earned_at_dates_the_receipt_its_month_and_its_rate_but_not_recorded_at(monkeypatch):
+    earned = datetime(2026, 11, 30, 15, 30, tzinfo=timezone.utc)  # 2026-11-30 23:30 in Bali
+    conn = AsyncMock()
+    conn.fetchrow.side_effect = [None, None, {"event_kind": "service_delivered", "status": "x"}]
+    monkeypatch.setattr(bonus, "_write_ledger", AsyncMock())
+    await bonus.record_delivery_bonus(
+        conn, 12, "company_pt_pma", "m@example.invalid", "service_delivered", earned_at=earned
+    )
+    insert = conn.fetchrow.await_args_list[1].args
+    assert insert[5] == earned
+    assert insert[6] == bonus.payroll_award_date(earned) and insert[6].month == 11
+    assert insert[7] == date(2026, 11, 30)
+    assert insert[9] != earned and insert[9].date() >= date(2026, 11, 28)
 
 
 @pytest.mark.asyncio
@@ -86,7 +125,7 @@ async def test_closed_payroll_does_not_cancel_the_qualifying_milestone(monkeypat
         "awarded_at": datetime.now(timezone.utc),
     }
     conn = AsyncMock()
-    conn.fetchrow.side_effect = [receipt, {"status": "payroll_locked"}]
+    conn.fetchrow.side_effect = [None, receipt, {"status": "payroll_locked"}]
     monkeypatch.setattr(bonus, "_write_ledger", AsyncMock(side_effect=BonusPeriodLockedError))
     assert (
         await bonus.record_delivery_bonus(conn, 2, "tax", "a@example.invalid", "service_delivered")

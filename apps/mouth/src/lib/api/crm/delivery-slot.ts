@@ -20,6 +20,8 @@ export interface DeliverySlot {
   file_name: string | null;
   waiver_reason: string | null;
   can_repair?: boolean;
+  // SHA-256 of the file the operator uploaded into this slot; null for a document that came from elsewhere.
+  content_sha256?: string | null;
   reusable_document_id: number | null;
   issued_on: string | null;
 }

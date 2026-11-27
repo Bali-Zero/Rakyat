@@ -44,6 +44,8 @@ interface Delivery {
     | null;
   visa_followup?: VisaFollowup | null;
   needs_titles: boolean;
+  // Final delivery completed this practice: its empty slots take a file, and say "Upload".
+  delivery_recorded?: boolean;
   // A November practice completed before Final delivery: it takes every empty document.
   legacy_proof?: boolean;
   bonus_instruction?: "upload" | "upload_or_waive" | null;
@@ -60,6 +62,23 @@ function bonusInstruction(data: Delivery, kind: "upload" | "upload_or_waive") {
 
 const actionStyle =
   "text-sm font-semibold text-[var(--bz-accent)] underline disabled:opacity-50";
+
+// What a failed request must have left behind to count as done (the response may be the only thing lost).
+type Recovery = { confirmed: (data: Delivery) => boolean; slotKey?: string };
+
+async function fileSha256(file: File): Promise<string | null> {
+  try {
+    const digest = await crypto.subtle.digest(
+      "SHA-256",
+      await file.arrayBuffer(),
+    );
+    return Array.from(new Uint8Array(digest), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+  } catch {
+    return null;
+  }
+}
 
 type DeliveryCardProps = { practice: Practice; onComplete: () => void };
 
@@ -166,6 +185,7 @@ function StaffDeliveryCard({
     request: () => Promise<Delivery>,
     message: string,
     repairSlot?: Slot,
+    recovery?: Recovery,
   ) {
     // An upload is authorised by its own slot; the titles and waiver forms of a cohort
     // practice carry no slot and are authorised by the staff-edit permission.
@@ -181,24 +201,41 @@ function StaffDeliveryCard({
     try {
       const result = await request();
       await mutate(result, { revalidate: false });
-      setFeedback(message);
+      const completed = writable && result.status === "completed";
+      setFeedback(
+        completed && !/completed/i.test(message)
+          ? `${message} The practice is completed.`
+          : message,
+      );
       window.dispatchEvent(new Event("kita:delivery-changed"));
       setWaiveKey("");
       setWaiver("");
-      if (writable && result.status === "completed") onComplete();
+      if (completed) onComplete();
     } catch (e) {
       setFailure(
         e instanceof Error
           ? e.message
           : "The change could not be saved. Please retry.",
       );
-      // A response can be lost after the server commits. Recover its actual state.
+      // A response can be lost after the server commits. Recover only what THIS request asked for:
+      // the state it left must show it (an upload: that slot holds that very content).
       const refreshed = await mutate().catch(() => undefined);
-      if (writable && refreshed?.status === "completed") {
+      if (refreshed && recovery?.confirmed(refreshed)) {
         setFailure("");
-        setFeedback("Final documents delivered. Practice completed.");
+        setFeedback(message);
         window.dispatchEvent(new Event("kita:delivery-changed"));
-        onComplete();
+        if (writable && refreshed.status === "completed") onComplete();
+      } else if (refreshed && recovery?.slotKey) {
+        const now = refreshed.slots.find((s) => s.key === recovery.slotKey);
+        if (
+          now?.document_id != null &&
+          now.document_id !== repairSlot?.document_id
+        )
+          setFailure((text) =>
+            text.includes("Another file")
+              ? text
+              : `${text} Another file is now in this slot.`,
+          );
       }
     } finally {
       pending.current = false;
@@ -233,9 +270,13 @@ function StaffDeliveryCard({
       return;
     }
     setUploadingKey(slot.key);
+    // The browser's own SHA-256 of the file: after a lost response only that slot holding that very
+    // content counts as saved (the same name with other bytes is somebody else's file).
+    let sha: string | null = null;
     void change(
-      async () =>
-        post<Delivery>(
+      async () => {
+        sha = await fileSha256(file);
+        return post<Delivery>(
           `${url}/slots/${encodeURIComponent(slot.key)}${repairable(slot) ? "/repair" : ""}`,
           {
             file_name: file.name,
@@ -246,13 +287,22 @@ function StaffDeliveryCard({
               ? { company_id: Number(companyId) }
               : {}),
           },
-        ),
+        );
+      },
       repairable(slot) && !legacyOpen
-        ? "Missing permit restored."
+        ? data?.delivery_recorded
+          ? "Document added."
+          : "Missing permit restored."
         : slot.key === data?.bonus_slot
           ? `${visaDateSlot ? "Electronic Visa" : "Renewed IMK"} upload recorded.`
           : "Document saved.",
       slot,
+      {
+        slotKey: slot.key,
+        confirmed: (next) =>
+          sha !== null &&
+          next.slots.find((s) => s.key === slot.key)?.content_sha256 === sha,
+      },
     ).finally(() => setUploadingKey(null));
   }
 
@@ -354,7 +404,9 @@ function StaffDeliveryCard({
                 const action = legacyOpen
                   ? "Upload"
                   : repairable(slot)
-                    ? "Restore"
+                    ? data.delivery_recorded
+                      ? "Upload"
+                      : "Restore"
                     : saved
                       ? "Replace"
                       : "Upload";
@@ -498,6 +550,12 @@ function StaffDeliveryCard({
                                   ),
                                 "Combined permit linked to both requirements.",
                                 slot,
+                                {
+                                  confirmed: (next) =>
+                                    next.slots.find((s) => s.key === slot.key)
+                                      ?.document_id ===
+                                    slot.reusable_document_id,
+                                },
                               )
                             }
                           >
@@ -521,6 +579,15 @@ function StaffDeliveryCard({
                                       { reason: waiver.trim() },
                                     ),
                                   "Requirement updated.",
+                                  undefined,
+                                  {
+                                    confirmed: (next) =>
+                                      Boolean(
+                                        next.slots.find(
+                                          (s) => s.key === slot.key,
+                                        )?.waiver_reason,
+                                      ),
+                                  },
                                 );
                             }}
                           >
@@ -638,6 +705,8 @@ function StaffDeliveryCard({
                   void change(
                     () => post<Delivery>(`${url}/complete`),
                     "Final documents delivered. Practice completed.",
+                    undefined,
+                    { confirmed: (next) => next.status === "completed" },
                   )
                 }
               >
