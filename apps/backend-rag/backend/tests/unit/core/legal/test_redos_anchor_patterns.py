@@ -454,7 +454,9 @@ class TestNoAdjacentOverlappingRunsInTheCleaner:
         assert _adjacent_overlaps(pattern) == [], pattern
 
     def test_the_heading_line_has_none_either(self) -> None:
-        assert _adjacent_overlaps(const.STRUCTURAL_HEADING_LINE) == []
+        heading_line = getattr(const, "STRUCTURAL_HEADING_LINE", None)
+        assert heading_line is not None, "no structural heading line"
+        assert _adjacent_overlaps(heading_line) == []
 
 
 class TestTheClassIsExactlyBackslashSMinusNewline:
