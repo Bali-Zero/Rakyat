@@ -12,7 +12,11 @@ import asyncpg
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.app.dependencies import get_database_pool
-from backend.app.routers.portal import get_current_client
+from backend.app.routers.portal import (
+    VIEW_AS_READ_ONLY_DETAIL,
+    get_current_client,
+    is_viewing_as_client,
+)
 from backend.app.utils.logging_utils import get_logger
 
 logger = get_logger(__name__)
@@ -123,6 +127,8 @@ async def mark_notification_read(
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict[str, Any]:
     """Mark a notification as read."""
+    if is_viewing_as_client(client):
+        raise HTTPException(status_code=403, detail=VIEW_AS_READ_ONLY_DETAIL)
     success = await _mark_read(db_pool, client["client_id"], notification_id)
     if not success:
         raise HTTPException(status_code=404, detail="Notification not found")
@@ -135,6 +141,8 @@ async def mark_all_read(
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> dict[str, Any]:
     """Mark all notifications as read."""
+    if is_viewing_as_client(client):
+        raise HTTPException(status_code=403, detail=VIEW_AS_READ_ONLY_DETAIL)
     try:
         async with db_pool.acquire() as conn:
             await conn.execute(

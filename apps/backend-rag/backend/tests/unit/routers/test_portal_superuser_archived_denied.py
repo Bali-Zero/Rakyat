@@ -48,6 +48,10 @@ def _mock_request(user: dict, query_params: dict | None = None) -> MagicMock:
     request.state.user = user
     request.query_params = query_params or {}
     request.url.path = "/api/portal/profile"
+    # A read: the view-as rule refuses writes, and a double with no method
+    # fails closed (non-string method -> 403).
+    request.method = "GET"
+    request.scope = {}
     return request
 
 

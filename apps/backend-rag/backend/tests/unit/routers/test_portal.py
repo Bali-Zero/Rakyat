@@ -554,6 +554,53 @@ class TestMessages:
         assert response.json()["detail"] == "Message not found"
 
 
+class TestViewingAsClientMessages:
+    """A session viewing as a client must not author or change client state."""
+
+    @pytest.fixture
+    def viewing_client(self, app, mock_portal_client):
+        app.dependency_overrides[get_current_client] = lambda: {
+            **mock_portal_client,
+            "impersonating": True,
+        }
+        return TestClient(app)
+
+    def test_send_message_refused_and_nothing_inserted(self, viewing_client, mock_portal_service):
+        response = viewing_client.post(
+            "/api/portal/messages?as_client=42",
+            json={"content": "Typed by the viewer"},
+        )
+
+        assert response.status_code == 403
+        assert "read-only" in response.json()["detail"]
+        mock_portal_service.send_message.assert_not_awaited()
+
+    def test_mark_message_read_answers_success_and_writes_nothing(
+        self, viewing_client, mock_portal_service
+    ):
+        response = viewing_client.post("/api/portal/messages/5/read?as_client=42")
+
+        assert response.status_code == 200
+        assert response.json() == {"success": True, "message": "Message marked as read"}
+        mock_portal_service.mark_message_read.assert_not_awaited()
+
+    def test_own_session_still_sends_and_marks_read(
+        self, app, mock_portal_client, mock_portal_service
+    ):
+        app.dependency_overrides[get_current_client] = lambda: {
+            **mock_portal_client,
+            "impersonating": False,
+        }
+        own = TestClient(app)
+        mock_portal_service.send_message.return_value = {"id": 9}
+        mock_portal_service.mark_message_read.return_value = {"success": True}
+
+        assert own.post("/api/portal/messages", json={"content": "Hello"}).status_code == 200
+        assert own.post("/api/portal/messages/9/read").status_code == 200
+        mock_portal_service.send_message.assert_awaited_once()
+        mock_portal_service.mark_message_read.assert_awaited_once()
+
+
 # ============================================
 # SETTINGS TESTS
 # ============================================

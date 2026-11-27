@@ -19,7 +19,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 
 from backend.app.dependencies import get_database_pool
-from backend.app.routers.portal import get_current_client
+from backend.app.routers.portal import (
+    VIEW_AS_READ_ONLY_DETAIL,
+    get_current_client,
+    is_viewing_as_client,
+)
 from backend.app.utils.logging_utils import get_logger
 
 logger = get_logger(__name__)
@@ -68,8 +72,24 @@ async def get_prefs(
     user_id = client.get("user_id")
     if not user_id:
         raise HTTPException(status_code=400, detail="missing user_id")
+    viewing = is_viewing_as_client(client)
     async with pool.acquire() as conn:
         try:
+            if viewing:
+                # Same rule as get_current_client / the portal login: the
+                # client's own login is role='client', active, portal_access.
+                # Never the viewer's own row; oldest account wins.
+                user_id = await conn.fetchval(
+                    "SELECT id FROM team_members "
+                    "WHERE linked_client_id = $1 AND role = 'client' "
+                    "AND active = true AND portal_access = true "
+                    "AND id::text <> $2 "
+                    "ORDER BY created_at, id LIMIT 1",
+                    client["client_id"],
+                    str(client["user_id"]),
+                )
+                if user_id is None:
+                    return _default_prefs()
             row = await conn.fetchrow(
                 """
                 SELECT email_enabled, wa_enabled, wa_phone
@@ -102,6 +122,8 @@ async def put_prefs(
     user_id = client.get("user_id")
     if not user_id:
         raise HTTPException(status_code=400, detail="missing user_id")
+    if is_viewing_as_client(client):
+        raise HTTPException(status_code=403, detail=VIEW_AS_READ_ONLY_DETAIL)
 
     if payload.wa_enabled and not payload.wa_phone:
         raise HTTPException(

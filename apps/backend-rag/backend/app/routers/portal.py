@@ -143,6 +143,41 @@ async def _log_impersonation(
         logger.warning("impersonation audit log failed: %s", sanitize_for_log(e))
 
 
+VIEW_AS_READ_ONLY_DETAIL = "The portal is read-only while viewing as a client"
+
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+# Writes that stay open under view-as, as (METHOD, route template). Keep it
+# tiny: POST /messages/{id}/read answers its normal success shape and writes
+# nothing (the chat page fires it by itself), so it must not turn into a 403.
+VIEW_AS_WRITE_ALLOWLIST: frozenset[tuple[str, str]] = frozenset(
+    {("POST", "/api/portal/messages/{message_id}/read")}
+)
+
+
+def is_viewing_as_client(client: dict) -> bool:
+    """True when a superuser looks at the portal as a client (?as_client=)."""
+    return bool(client.get("impersonating"))
+
+
+def _refuse_view_as_write(request: Request) -> None:
+    """Raise 403 unless this request is a read (or the one allowlisted write).
+
+    Fails closed: a method or route template that is not a string is refused
+    before any set membership, so an unhashable value cannot raise TypeError.
+    """
+    method = getattr(request, "method", None)
+    if not isinstance(method, str):
+        raise HTTPException(status_code=403, detail=VIEW_AS_READ_ONLY_DETAIL)
+    if method in SAFE_METHODS:
+        return
+    scope = getattr(request, "scope", None)
+    route = scope.get("route") if isinstance(scope, dict) else None
+    template = getattr(route, "path", None)
+    if not isinstance(template, str) or (method, template) not in VIEW_AS_WRITE_ALLOWLIST:
+        raise HTTPException(status_code=403, detail=VIEW_AS_READ_ONLY_DETAIL)
+
+
 async def get_current_client(
     request: Request,
     db_pool: asyncpg.Pool = Depends(get_database_pool),
@@ -229,6 +264,12 @@ async def get_current_client(
                 target_client_id=as_client_id,
                 path=str(request.url.path),
             )
+
+        # The one place view-as is granted is the one place it is made
+        # read-only: every route that resolves its client here (as a
+        # dependency or in its body, under any prefix) is covered. The audit
+        # row above is written first, so a refused attempt is recorded.
+        _refuse_view_as_write(request)
 
         return {
             "client_id": target["id"],
@@ -907,6 +948,8 @@ async def send_message(
     """
     Send a message to the team.
     """
+    if is_viewing_as_client(client):
+        raise HTTPException(status_code=403, detail=VIEW_AS_READ_ONLY_DETAIL)
     try:
         message = await portal_service.send_message(
             client_id=client["client_id"],
@@ -943,6 +986,10 @@ async def mark_message_read(
     """
     Mark a message as read.
     """
+    if is_viewing_as_client(client):
+        # The chat page fires this by itself when it opens: answer the normal
+        # shape and leave the client's read state alone.
+        return {"success": True, "message": "Message marked as read"}
     try:
         result = await portal_service.mark_message_read(
             client["client_id"],
