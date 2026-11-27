@@ -669,7 +669,8 @@ class TestInvalidPromptDoesNotTripCircuitBreaker:
     @pytest.mark.asyncio
     async def test_a_valid_prompt_without_a_seat_is_still_an_outage(self, gateway_with_completion):
         """Innocence control: with no seat a valid prompt fails as before."""
-        from backend.llm.claude_oauth_client import ClaudeOAuthNotAvailable
+        # the class the gateway raises; another test reloads claude_oauth_client
+        from backend.services.rag.agentic.llm_gateway import ClaudeOAuthNotAvailable
 
         gateway, call = gateway_with_completion
         gateway._available = False
