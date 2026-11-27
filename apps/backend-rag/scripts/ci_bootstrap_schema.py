@@ -684,6 +684,85 @@ def main() -> int:
         )
     print("[bootstrap] hr_bonus_ledger legacy table ensured (for Migration 357)")
 
+    # Migration 395 drops two CHECKs of the legacy leave balances table with a plain
+    # ALTER that must fail loudly when the table is missing; mirror its 068 shape.
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS hr_leave_types (
+                    id              SERIAL PRIMARY KEY,
+                    code            VARCHAR(50) NOT NULL UNIQUE,
+                    name            VARCHAR(100) NOT NULL,
+                    description     TEXT,
+                    default_days    INTEGER NOT NULL CHECK (default_days >= 0),
+                    is_paid         BOOLEAN NOT NULL DEFAULT TRUE,
+                    requires_document BOOLEAN NOT NULL DEFAULT FALSE,
+                    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS hr_leave_balances (
+                    id              SERIAL PRIMARY KEY,
+                    employee_id     INTEGER NOT NULL REFERENCES hr_employees(id) ON DELETE CASCADE,
+                    leave_type_id   INTEGER NOT NULL REFERENCES hr_leave_types(id) ON DELETE RESTRICT,
+                    balance_year    SMALLINT NOT NULL CHECK (balance_year BETWEEN 2000 AND 2100),
+                    allocated_days  INTEGER NOT NULL DEFAULT 0 CHECK (allocated_days >= 0),
+                    carried_over    INTEGER NOT NULL DEFAULT 0 CHECK (carried_over >= 0),
+                    used_days       INTEGER NOT NULL DEFAULT 0 CHECK (used_days >= 0),
+                    pending_days    INTEGER NOT NULL DEFAULT 0 CHECK (pending_days >= 0),
+                    notes           TEXT,
+                    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    CONSTRAINT uq_hr_leave_bal UNIQUE (employee_id, leave_type_id, balance_year),
+                    CONSTRAINT ck_hr_leave_bal_nonneg CHECK (
+                        (allocated_days + carried_over) >= (used_days + pending_days)
+                    )
+                )
+                """
+            )
+        )
+    print("[bootstrap] hr_leave_balances legacy table ensured (for Migration 395)")
+
+    # 068 also gives the leave tables an updated_at trigger and the balances an index; production
+    # keeps them after Migration 395, so CI carries them too. The same function and trigger names
+    # as 068 (hr_leave_requests is not created here, so it gets none).
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE OR REPLACE FUNCTION hr_set_updated_at()
+                RETURNS TRIGGER AS $$
+                BEGIN
+                    NEW.updated_at = NOW();
+                    RETURN NEW;
+                END;
+                $$ LANGUAGE plpgsql
+                """
+            )
+        )
+        for table in ("hr_leave_types", "hr_leave_balances"):
+            conn.execute(text(f"DROP TRIGGER IF EXISTS trg_{table}_updated_at ON {table}"))
+            conn.execute(
+                text(
+                    f"CREATE TRIGGER trg_{table}_updated_at BEFORE UPDATE ON {table} "
+                    "FOR EACH ROW EXECUTE FUNCTION hr_set_updated_at()"
+                )
+            )
+        conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_hr_leave_bal_emp "
+                "ON hr_leave_balances(employee_id, balance_year)"
+            )
+        )
+    print("[bootstrap] hr leave updated_at triggers and balance index ensured")
+
     # practice_types prod-only divergence.
     #
     # The SQLModel `PracticeType` in `backend/app/modules/crm/models.py` declares

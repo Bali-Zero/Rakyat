@@ -114,7 +114,7 @@ async def _employee(pool: asyncpg.Pool, name: str, email: str) -> int:
 
 
 @pytest.mark.asyncio
-async def test_request_opens_year_then_enforces_and_reserves_balance(pool: asyncpg.Pool) -> None:
+async def test_request_opens_year_with_the_carry_and_reserves_balance(pool: asyncpg.Pool) -> None:
     service = HRService(pool)
     employee_id = await _employee(pool, "Synthetic One", "synthetic.one@example.test")
     annual_id = await pool.fetchval(
@@ -127,18 +127,13 @@ async def test_request_opens_year_then_enforces_and_reserves_balance(pool: async
         employee_id,
         annual_id,
     )
-    too_long = {
+    accepted = {
         "employee_id": employee_id,
         "leave_type_id": annual_id,
         "start_date": date(2027, 1, 3),
-        "end_date": date(2027, 1, 15),
-        "total_days": 13,
+        "end_date": date(2027, 1, 5),
+        "total_days": 3,
     }
-
-    with pytest.raises(ValueError, match="Insufficient leave balance"):
-        await service.request_leave(too_long)
-
-    accepted = dict(too_long, end_date=date(2027, 1, 5), total_days=3)
     result = await service.request_leave(accepted)
     balance = await pool.fetchrow(
         "SELECT allocated_days, carried_over, used_days, pending_days "
@@ -150,7 +145,7 @@ async def test_request_opens_year_then_enforces_and_reserves_balance(pool: async
     assert result["status"] == "pending"
     assert dict(balance) == {
         "allocated_days": 12,
-        "carried_over": 0,
+        "carried_over": 7,
         "used_days": 0,
         "pending_days": 3,
     }
@@ -222,14 +217,17 @@ async def test_open_year_preserves_existing_rows_and_only_copies_selected_employ
         await _open_year_balances(conn, 2027, first_employee)
 
     rows = await pool.fetch(
-        "SELECT employee_id, leave_type_id, allocated_days, used_days, pending_days "
-        "FROM hr_leave_balances WHERE balance_year = 2027 ORDER BY employee_id, leave_type_id"
+        "SELECT employee_id, leave_type_id, allocated_days, carried_over, used_days, "
+        "pending_days FROM hr_leave_balances WHERE balance_year = 2027 "
+        "ORDER BY employee_id, leave_type_id"
     )
+    # The row opened earlier keeps its own days and is re-carried from 2026: 12 - 5.
     assert [dict(row) for row in rows] == [
         {
             "employee_id": first_employee,
             "leave_type_id": annual_id,
             "allocated_days": 20,
+            "carried_over": 7,
             "used_days": 7,
             "pending_days": 4,
         }

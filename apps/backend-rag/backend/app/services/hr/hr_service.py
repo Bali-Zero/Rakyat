@@ -149,8 +149,109 @@ async def _refuse_if_bonus_month_closed(conn: Any, month: int, year: int) -> Non
         raise BonusPeriodLockedError(msg)
 
 
-async def _open_year_balances(conn: Any, year: int, employee_id: int | None = None) -> None:
-    """Open a year's balances from the prior year's tracked leave types."""
+ANNUAL_LEAVE_CODE = "annual"
+
+
+async def _carry_annual_remainder(
+    conn: Any,
+    year: int,
+    employee_id: int | None = None,
+    employee_ids: list[int] | None = None,
+) -> None:
+    """Set each annual balance of `year` to carry what the year before left, plus or minus.
+
+    The remainder is allocated + carried_over - used of the year before; a year that ended
+    in debt carries a negative number. Pending days are left out: a pending request moves
+    the remainder only once approved, and approve_leave carries that forward again.
+    """
+    query = """
+        UPDATE hr_leave_balances AS cur
+        SET carried_over = prev.allocated_days + prev.carried_over - prev.used_days
+        FROM hr_leave_balances AS prev, hr_leave_types AS lt
+        WHERE cur.balance_year = $1::int
+          AND prev.balance_year = $1::int - 1
+          AND prev.employee_id = cur.employee_id
+          AND prev.leave_type_id = cur.leave_type_id
+          AND lt.id = cur.leave_type_id
+          AND lt.code = $2
+          AND cur.carried_over
+              <> prev.allocated_days + prev.carried_over - prev.used_days
+    """
+    params: list[Any] = [year, ANNUAL_LEAVE_CODE]
+    if employee_id is not None:
+        query += " AND cur.employee_id = $3::int"
+        params.append(employee_id)
+    elif employee_ids is not None:
+        query += " AND cur.employee_id = ANY($3::int[])"
+        params.append(employee_ids)
+    await conn.execute(query, *params)
+
+
+# The two-key advisory-lock namespace of leave balances: (HR_LEAVE_LOCK_NS, employee_id).
+# Two-key locks never share keys with one-key locks such as pg_advisory_xact_lock(hashtext(..)),
+# and no other two-key lock in the repository uses this first key.
+HR_LEAVE_LOCK_NS = 742030
+
+
+async def _lock_leave_balances(conn: Any, employee_id: int) -> None:
+    """Hold one employee's leave balances until the transaction ends.
+
+    Every leave request, approval and rejection, and every opening of a year, takes it before
+    reading a balance. A check then sees what the write before it left, and no year is carried
+    from a year another transaction is still changing. The database no longer stops a balance
+    below zero, so this is what keeps two requests from both spending the same days.
+    """
+    await conn.execute(
+        "SELECT pg_advisory_xact_lock($1::int, $2::int)", HR_LEAVE_LOCK_NS, employee_id
+    )
+
+
+async def _lock_leave_balances_a_year_opens_from(conn: Any, year: int) -> list[int]:
+    """Take _lock_leave_balances for every employee `year` opens from, in id order.
+
+    Returns the ids it locked. The caller must open `year` for exactly those employees: an
+    employee whose prior-year row appears after this statement is not locked here.
+    """
+    rows = await conn.fetch(
+        """
+        SELECT prior.employee_id, pg_advisory_xact_lock($2::int, prior.employee_id)
+        FROM (
+            SELECT DISTINCT employee_id FROM hr_leave_balances
+            WHERE balance_year = $1::int - 1
+            ORDER BY employee_id
+        ) AS prior
+        """,
+        year,
+        HR_LEAVE_LOCK_NS,
+    )
+    return sorted(int(row["employee_id"]) for row in rows)
+
+
+async def _carry_forward(conn: Any, employee_id: int, from_year: int) -> None:
+    """Re-carry every later year already opened for one employee, oldest first."""
+    last_year = await conn.fetchval(
+        "SELECT MAX(balance_year) FROM hr_leave_balances WHERE employee_id = $1",
+        employee_id,
+    )
+    if last_year is None:
+        return
+    for year in range(from_year + 1, int(last_year) + 1):
+        await _carry_annual_remainder(conn, year, employee_id)
+
+
+async def _open_year_balances(
+    conn: Any,
+    year: int,
+    employee_id: int | None = None,
+    employee_ids: list[int] | None = None,
+) -> None:
+    """Open a year's balances from the prior year's tracked leave types.
+
+    Annual leave carries the signed remainder of the year before; every other type carries 0.
+    A year opened earlier (a December request for January leave) is re-carried here too.
+    `employee_ids` limits every insert and re-carry to the employees whose lock the caller
+    holds; an employee outside it is left for its own next access to open under its own lock.
+    """
     query = """
         INSERT INTO hr_leave_balances
             (employee_id, leave_type_id, balance_year, allocated_days,
@@ -163,10 +264,14 @@ async def _open_year_balances(conn: Any, year: int, employee_id: int | None = No
     if employee_id is not None:
         query += " AND employee_id = $2::int"
         params.append(employee_id)
+    elif employee_ids is not None:
+        query += " AND employee_id = ANY($2::int[])"
+        params.append(employee_ids)
     query += """
         ON CONFLICT (employee_id, leave_type_id, balance_year) DO NOTHING
     """
     await conn.execute(query, *params)
+    await _carry_annual_remainder(conn, year, employee_id, employee_ids)
 
 
 def department_of(email: str | None, stored: str | None = None) -> str:
@@ -1371,15 +1476,25 @@ class HRService:
 
     # ─── LEAVE ───────────────────────────────────────────────────────
 
+    @staticmethod
+    async def _lock_requesters_balances(conn: Any, request_id: int) -> None:
+        """Take _lock_leave_balances for the employee a leave request belongs to, if it exists."""
+        employee_id = await conn.fetchval(
+            "SELECT employee_id FROM hr_leave_requests WHERE id = $1", request_id
+        )
+        if employee_id is not None:
+            await _lock_leave_balances(conn, employee_id)
+
     async def request_leave(self, data: dict[str, Any]) -> dict[str, Any]:
         """Create a leave request."""
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
+                await _lock_leave_balances(conn, data["employee_id"])
                 # Validate leave_type_id exists and is active (server-side guard
                 # against clients bypassing the dropdown filter).
                 leave_type = await conn.fetchrow(
                     """
-                    SELECT id FROM hr_leave_types
+                    SELECT id, code FROM hr_leave_types
                     WHERE id = $1 AND is_active = TRUE
                 """,
                     data["leave_type_id"],
@@ -1404,13 +1519,16 @@ class HRService:
                 )
 
                 if balance:
+                    # Annual leave may go below zero: leave taken ahead of the allowance is
+                    # a debt the next year opens with, and approval is the control. Every
+                    # other tracked type keeps its allowance as a limit.
                     available = (
                         balance["allocated_days"]
                         + balance["carried_over"]
                         - balance["used_days"]
                         - balance["pending_days"]
                     )
-                    if data["total_days"] > available:
+                    if leave_type["code"] != ANNUAL_LEAVE_CODE and data["total_days"] > available:
                         msg = f"Insufficient leave balance: {available} days available, {data['total_days']} requested"
                         raise ValueError(msg)
 
@@ -1449,6 +1567,7 @@ class HRService:
         """Approve a leave request."""
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
+                await self._lock_requesters_balances(conn, request_id)
                 req = await conn.fetchrow(
                     """
                     UPDATE hr_leave_requests
@@ -1478,6 +1597,8 @@ class HRService:
                     req["leave_type_id"],
                     req["start_date"].year,
                 )
+                # Days used in a year change what it leaves to the years already opened after it.
+                await _carry_forward(conn, req["employee_id"], req["start_date"].year)
 
                 logger.info("Leave request %s approved", request_id)
                 return dict(req)
@@ -1491,6 +1612,7 @@ class HRService:
         """Reject a leave request."""
         async with self.db_pool.acquire() as conn:
             async with conn.transaction():
+                await self._lock_requesters_balances(conn, request_id)
                 req = await conn.fetchrow(
                     """
                     UPDATE hr_leave_requests
@@ -1573,7 +1695,8 @@ class HRService:
         """Get leave balances for an employee."""
         if year is None:
             year = date.today().year
-        async with self.db_pool.acquire() as conn:
+        async with self.db_pool.acquire() as conn, conn.transaction():
+            await _lock_leave_balances(conn, employee_id)
             await _open_year_balances(conn, year, employee_id)
             rows = await conn.fetch(
                 """
@@ -1592,11 +1715,17 @@ class HRService:
         self,
         year: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Get leave balance summary for all active employees."""
+        """Get leave balance summary for all active employees.
+
+        The year is opened only for the employees locked at the start of the call. One that
+        gains a prior-year row mid-call may be missing from this summary; its own next access
+        opens the year under its own lock.
+        """
         if year is None:
             year = date.today().year
-        async with self.db_pool.acquire() as conn:
-            await _open_year_balances(conn, year)
+        async with self.db_pool.acquire() as conn, conn.transaction():
+            locked = await _lock_leave_balances_a_year_opens_from(conn, year)
+            await _open_year_balances(conn, year, employee_ids=locked)
             rows = await conn.fetch(
                 """
                 SELECT tm.full_name as employee_name, tm.email,

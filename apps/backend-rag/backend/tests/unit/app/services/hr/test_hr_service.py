@@ -437,7 +437,7 @@ class TestLeave:
         conn = mock_db_pool._mock_conn
         conn.fetchrow = AsyncMock(
             side_effect=[
-                {"id": 1},  # leave_type check
+                {"id": 1, "code": "annual"},  # leave_type check
                 {
                     "allocated_days": 12,
                     "carried_over": 0,
@@ -465,7 +465,7 @@ class TestLeave:
         conn = mock_db_pool._mock_conn
         conn.fetchrow = AsyncMock(
             side_effect=[
-                {"id": 1},  # leave type
+                {"id": 1, "code": "marriage"},  # leave type with a fixed allowance
                 {
                     "allocated_days": 5,
                     "carried_over": 0,
