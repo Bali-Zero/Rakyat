@@ -26,6 +26,7 @@ import httpx
 
 from backend.app.utils.tracing import set_span_attribute, set_span_status, trace_span
 from backend.core import score_provenance
+from backend.services.crm.entity_search import escape_like
 from backend.services.kbli_eye import KBLIEye
 from backend.services.kbli_pma_disclosure import (
     disclose_bali,
@@ -1414,7 +1415,8 @@ class CRMTool(BaseTool):
                         return json.dumps({"error": "search_term required"})
                     params = []
                     inside = _crm_client_filter(scope, params)
-                    params += [f"%{search_term}%", limit]
+                    # The term is matched as typed: `%`, `_` and `\` are not wildcards.
+                    params += [f"%{escape_like(search_term)}%", limit]
                     term = f"${len(params) - 1}"
                     rows = await conn.fetch(
                         f"""

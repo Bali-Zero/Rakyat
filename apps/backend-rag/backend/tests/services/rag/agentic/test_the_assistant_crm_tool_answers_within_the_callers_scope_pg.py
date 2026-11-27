@@ -305,6 +305,27 @@ async def test_an_owner_stored_in_mixed_case_is_not_found_by_the_desk_and_is_fou
     assert 9 in await _all_matching(tool, _whatsapp("team", MEMBER))
 
 
+async def test_the_search_term_is_matched_as_typed(pool: asyncpg.Pool, tool: CRMTool) -> None:
+    async with pool.acquire() as c:
+        await c.execute(
+            "INSERT INTO clients (id, full_name, email, status, passport_number, assigned_to)"
+            " VALUES"
+            " (20, 'Promo 50% Off', 'p20@example.test', 'active', 'P0020', $1),"
+            " (21, 'Promo 500 Off', 'p21@example.test', 'active', 'P0021', $1),"
+            " (22, 'Under Score', 'a_b@example.test', 'active', 'P0022', $1),"
+            " (23, 'Under Score Not', 'axb@example.test', 'active', 'P0023', $1),"
+            " (24, 'Back\\Slash', 'p24@example.test', 'active', 'P0024', $1),"
+            " (25, 'BackSlash', 'p25@example.test', 'active', 'P0025', $1)",
+            OTHER,
+        )
+    admin = _desk(ADMIN_BY_ADDRESS)
+
+    assert await _ids(tool, "search_clients", admin, search_term="50%") == [20]
+    assert await _ids(tool, "search_clients", admin, search_term="%") == [20]
+    assert await _ids(tool, "search_clients", admin, search_term="a_b") == [22]
+    assert await _ids(tool, "search_clients", admin, search_term="k\\S") == [24]
+
+
 async def test_a_deleted_client_is_given_to_nobody(tool: CRMTool) -> None:
     for who in (_desk(MEMBER), _desk(BOSS, "founder"), _whatsapp("creator")):
         assert 6 not in await _all_matching(tool, who)
