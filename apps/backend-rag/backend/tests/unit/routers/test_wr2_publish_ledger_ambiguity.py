@@ -8,6 +8,7 @@ rules: the ON CONFLICT reset and the terminal-state guard on UPDATE).
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Any
@@ -33,30 +34,58 @@ BODY = {
 CAROUSEL_ID = str(uuid4())
 
 
+def _guard_states(sql: str) -> tuple[str, ...]:
+    """The states a statement's own `state NOT IN (...)` clause excludes."""
+    m = re.search(r"state NOT IN \(([^)]*)\)", sql)
+    return tuple(x.strip().strip("'") for x in m.group(1).split(",")) if m else ()
+
+
 class FakeLedgerConn:
-    """In-memory single-table ledger speaking the router's SQL."""
+    """In-memory single-table ledger speaking the router's SQL.
+
+    The WHERE guards are READ FROM THE SQL TEXT the router sends (the
+    `state NOT IN (...)` clause), not hand-coded here, so a guard removed from the
+    SQL stops being enforced by this fake too.
+    """
+
+    # Callbacks run just before an arm statement is evaluated: they model another
+    # request writing the row between the hold-check SELECT and the re-arm.
+    before_arm: list[Any] = []
 
     def __init__(self, rows: dict[str, dict[str, Any]]) -> None:
         self.rows = rows
 
-    async def fetchrow(self, sql: str, key: str) -> dict[str, Any] | None:
+    async def fetchrow(self, sql: str, *args: Any) -> dict[str, Any] | None:
+        if sql.startswith("INSERT INTO wr2_publish_attempts"):
+            return {"state": "planned"} if self._arm(sql, args) else None
         assert "FROM wr2_publish_attempts" in sql
-        return self.rows.get(key)
+        return self.rows.get(args[0])
+
+    def _arm(self, sql: str, args: tuple[Any, ...]) -> bool:
+        """INSERT ... ON CONFLICT DO UPDATE [WHERE state NOT IN (...)]."""
+        for hook in list(FakeLedgerConn.before_arm):
+            hook(self.rows)
+        key = args[3]
+        row = self.rows.get(key)
+        if row is None:
+            self.rows[key] = {"state": "planned", "provider_response": None}
+            return True
+        assert "ON CONFLICT (idempotency_key) DO UPDATE" in sql
+        if row["state"] in _guard_states(sql):
+            return False  # DO UPDATE ... WHERE false: nothing armed, no RETURNING row
+        row["state"] = "planned"
+        return True
 
     async def execute(self, sql: str, *args: Any) -> str:
         if sql.startswith("INSERT INTO wr2_publish_attempts"):
-            key = args[3]
-            self.rows[key] = {"state": "planned", "provider_response": None}
+            self._arm(sql, args)
             return "INSERT 0 1"
         assert sql.startswith("UPDATE wr2_publish_attempts")
         state, response, key = args
         row = self.rows.get(key)
         if row is None:
             return "UPDATE 0"
-        if re.search(r"state NOT IN \('published', 'recorded'\)", sql) and row["state"] in (
-            "published",
-            "recorded",
-        ):
+        if row["state"] in _guard_states(sql):
             return "UPDATE 0"
         row["state"] = state
         row["provider_response"] = response
@@ -101,6 +130,7 @@ class Meta:
 @pytest.fixture
 def rig(monkeypatch: pytest.MonkeyPatch):
     rows: dict[str, dict[str, Any]] = {}
+    FakeLedgerConn.before_arm = []
 
     async def connect(_dsn: str) -> FakeLedgerConn:
         return FakeLedgerConn(rows)
@@ -134,6 +164,7 @@ def rig(monkeypatch: pytest.MonkeyPatch):
     http = TestClient(app, raise_server_exceptions=False)
     yield rows, use, http
     app.dependency_overrides.clear()
+    FakeLedgerConn.before_arm = []
 
 
 def _only_row(rows: dict[str, dict[str, Any]]) -> dict[str, Any]:
@@ -232,3 +263,97 @@ def test_clean_publish_is_published_and_a_repeat_is_refused_as_before(rig) -> No
     assert again.status_code == 409
     assert again.json()["detail"]["error"] == "already_published"
     assert again_meta.paths == []
+
+
+def test_late_plain_failure_cannot_release_a_hold(rig) -> None:
+    """GUILT (overlap): A times out -> hold. B, started before the hold, then fails
+    plainly and its late 'failed' write must NOT release it; C is refused with
+    zero Instagram calls and media_publish was sent exactly once in total."""
+    rows, use, http = rig
+    meta_a = Meta(publish="timeout")
+    use(meta_a)
+    assert http.post("/api/war-room/publish-ig", json=BODY).status_code == 422
+    assert _only_row(rows)["state"] == "blocked_manual_gate"
+
+    asyncio.run(
+        wr2_publish._ledger_record_result(
+            carousel_id=CAROUSEL_ID,
+            content_hash=wr2_publish._content_hash(IMAGE_URLS, BODY["caption"]),
+            state="failed",
+            provider_response={"error": "late child creation failure"},
+        )
+    )
+    assert _only_row(rows)["state"] == "blocked_manual_gate"
+
+    meta_c = Meta()
+    use(meta_c)
+    c = http.post("/api/war-room/publish-ig", json=BODY)
+    assert c.status_code == 409, c.text
+    assert c.json()["detail"]["error"] == "publish_outcome_unknown"
+    assert meta_c.paths == []
+    assert meta_a.publish_calls + meta_c.publish_calls == 1
+
+
+def test_hold_written_between_check_and_rearm_is_not_rearmed(rig) -> None:
+    """GUILT (race): a hold lands after the hold-check SELECT; the re-arm arms
+    nothing and the request answers 409 with zero Instagram calls."""
+    rows, use, http = rig
+    meta = Meta()
+    use(meta)
+    key = f"{CAROUSEL_ID}:instagram:{wr2_publish._content_hash(IMAGE_URLS, BODY['caption'])[:16]}"
+    rows[key] = {"state": "failed", "provider_response": None}
+
+    def hold_lands(r: dict[str, dict[str, Any]]) -> None:
+        r[key]["state"] = "blocked_manual_gate"
+
+    FakeLedgerConn.before_arm.append(hold_lands)
+    resp = http.post("/api/war-room/publish-ig", json=BODY)
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"]["error"] == "publish_outcome_unknown"
+    assert meta.paths == []
+    assert rows[key]["state"] == "blocked_manual_gate"
+
+
+def test_publish_landing_between_check_and_rearm_answers_already_published(rig) -> None:
+    """GUILT (race): a published row is not re-armed either; existing refusal."""
+    rows, use, http = rig
+    meta = Meta()
+    use(meta)
+    key = f"{CAROUSEL_ID}:instagram:{wr2_publish._content_hash(IMAGE_URLS, BODY['caption'])[:16]}"
+    rows[key] = {"state": "failed", "provider_response": None}
+
+    def published_lands(r: dict[str, dict[str, Any]]) -> None:
+        r[key] = {"state": "published", "provider_response": json.dumps({"permalink": "u"})}
+
+    FakeLedgerConn.before_arm.append(published_lands)
+    resp = http.post("/api/war-room/publish-ig", json=BODY)
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["error"] == "already_published"
+    assert meta.paths == []
+
+
+def test_sql_guards_pin_the_hold_state() -> None:
+    """The SQL text the router sends carries the guards the fake reads."""
+    assert "blocked_manual_gate" in _guard_states(wr2_publish._ARM_PLANNED_SQL)
+    assert "blocked_manual_gate" in _guard_states(wr2_publish._UPDATE_FAILURE_SQL)
+    assert "blocked_manual_gate" not in _guard_states(wr2_publish._UPDATE_RESULT_SQL)
+    for sql in (
+        wr2_publish._ARM_PLANNED_SQL,
+        wr2_publish._UPDATE_FAILURE_SQL,
+        wr2_publish._UPDATE_RESULT_SQL,
+    ):
+        assert {"published", "recorded"} <= set(_guard_states(sql))
+    assert "RETURNING state" in wr2_publish._ARM_PLANNED_SQL
+
+
+def test_failed_row_is_still_rearmed_and_retried(rig) -> None:
+    """INNOCENCE: a plain 'failed' row is re-armed by the guarded SQL and published."""
+    rows, use, http = rig
+    key = f"{CAROUSEL_ID}:instagram:{wr2_publish._content_hash(IMAGE_URLS, BODY['caption'])[:16]}"
+    rows[key] = {"state": "failed", "provider_response": None}
+    meta = Meta()
+    use(meta)
+    resp = http.post("/api/war-room/publish-ig", json=BODY)
+    assert resp.status_code == 200, resp.text
+    assert meta.publish_calls == 1
+    assert rows[key]["state"] == "published"

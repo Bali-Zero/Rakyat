@@ -262,6 +262,67 @@ async def _resolve_carousel_id(conn: asyncpg.Connection, slug: str) -> str:
     return cid
 
 
+_SELECT_PRIOR_SQL = (
+    "SELECT state, provider_response FROM wr2_publish_attempts WHERE idempotency_key = $1"
+)
+# Insert the 'planned' row, or re-arm an existing one ONLY while it is not
+# terminal and not held. The WHERE makes the re-arm atomic with its state check.
+_ARM_PLANNED_SQL = (
+    "INSERT INTO wr2_publish_attempts "
+    "(carousel_id, platform, content_hash, state, idempotency_key) "
+    "VALUES ($1, $2, $3, 'planned', $4) "
+    "ON CONFLICT (idempotency_key) DO UPDATE "
+    "SET state = 'planned', updated_at = now() "
+    "WHERE wr2_publish_attempts.state NOT IN ('published', 'recorded', 'blocked_manual_gate') "
+    "RETURNING state"
+)
+# Post-attempt writes. A plain failure must never release a hold (a late result
+# of a request that started before the hold was written); an ambiguous result
+# or a success may still move a held row.
+_UPDATE_RESULT_SQL = (
+    "UPDATE wr2_publish_attempts "
+    "SET state = $1, provider_response = $2::text::jsonb, updated_at = now() "
+    "WHERE idempotency_key = $3 AND state NOT IN ('published', 'recorded')"
+)
+_UPDATE_FAILURE_SQL = (
+    "UPDATE wr2_publish_attempts "
+    "SET state = $1, provider_response = $2::text::jsonb, updated_at = now() "
+    "WHERE idempotency_key = $3 "
+    "AND state NOT IN ('published', 'recorded', 'blocked_manual_gate')"
+)
+
+
+def _prior_answer(
+    prior: Any, idempotency_key: str, carousel_id: str
+) -> tuple[str, str, str | None] | None:
+    """Map a published/recorded or held ledger row to its refusal; None = may arm."""
+    if prior is None:
+        return None
+    if prior["state"] in ("published", "recorded"):
+        prior_url = None
+        pr = prior["provider_response"]
+        if pr:
+            try:
+                pr_d = pr if isinstance(pr, dict) else json.loads(pr)
+                prior_url = pr_d.get("permalink") or pr_d.get("post_url")
+            except (ValueError, TypeError):
+                prior_url = None
+        logger.warning(
+            "wr2_publish: REFUSE double-publish key=%s already state=%s",
+            idempotency_key,
+            prior["state"],
+        )
+        return carousel_id, "refuse", prior_url
+    if prior["state"] == _STATE_AMBIGUOUS:
+        logger.warning(
+            "wr2_publish: HOLD key=%s prior publish outcome unknown (%s)",
+            idempotency_key,
+            prior["state"],
+        )
+        return carousel_id, "hold", None
+    return None
+
+
 async def _ledger_precondition(
     *,
     slug: str,
@@ -307,46 +368,30 @@ async def _ledger_precondition(
         carousel_id = await _resolve_carousel_id(conn, slug)
         idempotency_key = f"{carousel_id}:{_PLATFORM}:{content_hash[:16]}"
 
-        prior = await conn.fetchrow(
-            "SELECT state, provider_response FROM wr2_publish_attempts "
-            "WHERE idempotency_key = $1",
-            idempotency_key,
-        )
-        if prior is not None and prior["state"] in ("published", "recorded"):
-            prior_url = None
-            pr = prior["provider_response"]
-            if pr:
-                try:
-                    pr_d = pr if isinstance(pr, dict) else json.loads(pr)
-                    prior_url = pr_d.get("permalink") or pr_d.get("post_url")
-                except (ValueError, TypeError):
-                    prior_url = None
-            logger.warning(
-                "wr2_publish: REFUSE double-publish key=%s already state=%s",
-                idempotency_key,
-                prior["state"],
-            )
-            return carousel_id, "refuse", prior_url
+        prior = await conn.fetchrow(_SELECT_PRIOR_SQL, idempotency_key)
+        answered = _prior_answer(prior, idempotency_key, carousel_id)
+        if answered is not None:
+            return answered
 
-        if prior is not None and prior["state"] == _STATE_AMBIGUOUS:
-            logger.warning(
-                "wr2_publish: HOLD key=%s prior publish outcome unknown (%s)",
-                idempotency_key,
-                prior["state"],
-            )
-            return carousel_id, "hold", None
-
-        await conn.execute(
-            "INSERT INTO wr2_publish_attempts "
-            "(carousel_id, platform, content_hash, state, idempotency_key) "
-            "VALUES ($1, $2, $3, 'planned', $4) "
-            "ON CONFLICT (idempotency_key) DO UPDATE "
-            "SET state = 'planned', updated_at = now()",
+        # The state guard lives in the SQL so it is atomic with the write: a row
+        # that became published/recorded/blocked_manual_gate after the SELECT
+        # above is NOT re-armed (RETURNING yields no row), and is answered below
+        # exactly as the check above would have answered it.
+        armed = await conn.fetchrow(
+            _ARM_PLANNED_SQL,
             uuid.UUID(carousel_id),
             _PLATFORM,
             content_hash,
             idempotency_key,
         )
+        if armed is None:
+            current = await conn.fetchrow(_SELECT_PRIOR_SQL, idempotency_key)
+            answered = _prior_answer(current, idempotency_key, carousel_id)
+            if answered is not None:
+                return answered
+            # Not armed and no recognisable state: fail closed, send nothing.
+            logger.warning("wr2_publish: HOLD key=%s re-arm refused", idempotency_key)
+            return carousel_id, "hold", None
         logger.info(
             "wr2_publish: ledger 'planned' written key=%s carousel_id=%s",
             idempotency_key,
@@ -386,9 +431,7 @@ async def _ledger_record_result(
         try:
             idempotency_key = f"{carousel_id}:{_PLATFORM}:{content_hash[:16]}"
             status = await conn.execute(
-                "UPDATE wr2_publish_attempts "
-                "SET state = $1, provider_response = $2::text::jsonb, updated_at = now() "
-                "WHERE idempotency_key = $3 AND state NOT IN ('published', 'recorded')",
+                _UPDATE_FAILURE_SQL if state == "failed" else _UPDATE_RESULT_SQL,
                 state,
                 json.dumps(provider_response or {}),
                 idempotency_key,

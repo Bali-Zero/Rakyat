@@ -213,6 +213,10 @@ class PublisherOrchestrator:
                 return result
 
             last_error = result.error
+            if result.ambiguous:
+                # The publish may already be live: a second attempt could post
+                # twice. Stop and let the caller hand it to a human.
+                return result
             if attempt < self.max_retries:
                 delay = self.backoffs_s[min(attempt - 1, len(self.backoffs_s) - 1)]
                 await asyncio.sleep(delay)
