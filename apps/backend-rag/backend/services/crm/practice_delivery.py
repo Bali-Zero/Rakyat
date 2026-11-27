@@ -124,14 +124,17 @@ async def state(conn: Any, p: dict, user: dict | None = None) -> dict:
         }
         for slot in slots
     ]
-    delivered = p["status"] == "completed" and await conn.fetchval(
+    completed = p["status"] == "completed"
+    delivered = completed and await conn.fetchval(
         "SELECT EXISTS(SELECT 1 FROM practice_delivery_completions WHERE practice_id=$1 AND service_code=$2)",
         p["id"],
         p["code"],
     )
     for slot in resolved:
+        # A practice completed before Final delivery existed (2026-11-24) has no
+        # completion record, yet its issued permit must still reach the case.
         slot["can_repair"] = bool(
-            delivered
+            completed
             and not slot["document_id"]
             and not slot["waiver_reason"]
             and document_type(slot["key"], slot["label"]) in _PERMIT_TYPES
@@ -371,10 +374,8 @@ async def reuse(pool: Any, practice_id: int, key: str, user: dict, document_id: 
             require_open(p)
         view = await state(conn, p, user)
         slot = slot_for(view, key)
-        if repair and (
-            not view["delivery_recorded"] or document_type(key, slot["label"]) not in _PERMIT_TYPES
-        ):
-            raise HTTPException(409, "Only a previously delivered permit can be repaired")
+        if repair and document_type(key, slot["label"]) not in _PERMIT_TYPES:
+            raise HTTPException(409, "Only a permit can be added to a completed practice")
         if slot["document_id"] == document_id:
             return await state(conn, p, user)
         if (repair and not slot["can_repair"]) or slot["reusable_document_id"] != document_id:
@@ -571,13 +572,13 @@ async def upload(
         initial_slot = slot_for(initial_view, key)
         if repair:
             if (
-                not initial_view["delivery_recorded"]
+                snapshot["status"] != "completed"
                 or initial_slot["waiver_reason"]
                 or document_type(key, initial_slot["label"]) not in _PERMIT_TYPES
             ):
                 raise HTTPException(
                     409,
-                    "Only a missing final permit on a previously delivered practice can be repaired",
+                    "Only a missing final permit on a completed practice can be repaired",
                 )
             previous = await previous_slot(conn, snapshot, key)
             original_company = previous["company_id"] if previous else None
@@ -615,7 +616,7 @@ async def upload(
                 p[k] != snapshot[k]
                 for k in ("code", "client_id", "family_member_id", "assigned_to")
             )
-            or (repair and not view["delivery_recorded"])
+            or (repair and p["status"] != "completed")
             or initial_slot["label"] != slot["label"]
         ):
             raise HTTPException(409, "Practice changed during upload. Review the current practice.")

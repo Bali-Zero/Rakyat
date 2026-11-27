@@ -381,6 +381,34 @@ async def test_client_cannot_remove_final_evidence_and_staff_can_repair_after_co
 
 
 @pytest.mark.asyncio
+async def test_practice_completed_before_final_delivery_can_still_receive_its_permit(pool):
+    # Closed by a status edit before Final delivery existed (2026-11-24): no completion record.
+    async with pool.acquire() as conn:
+        await conn.execute("UPDATE practices SET status='completed' WHERE id=7")
+        view = await service.state(conn, await service.practice(conn, 7, STAFF), STAFF)
+    assert not view["delivery_recorded"]
+    assert view["slots"][1]["can_repair"] and not view["slots"][0]["can_repair"]
+    tasks = BackgroundTasks()
+    with pytest.raises(HTTPException):
+        await service.upload(
+            pool, 7, "electronic_visa", STAFF, final_file("electronic-visa"), tasks, repair=True
+        )
+    attached = await service.upload(
+        pool, 7, "document_2", STAFF, final_file("late-itk"), tasks, repair=True
+    )
+    assert attached["status"] == "completed" and not attached["delivery_recorded"]
+    assert attached["slots"][1]["document_id"] and not attached["slots"][1]["can_repair"]
+    assert not tasks.tasks
+    async with pool.acquire() as conn:
+        assert await conn.fetchval("SELECT count(*) FROM hr_delivery_bonus_events") == 0
+        assert await conn.fetchval("SELECT count(*) FROM practice_delivery_completions") == 0
+        assert await conn.fetchval("SELECT status FROM practices WHERE id=7") == "completed"
+        assert [d["file_name"] for d in (await service.portal_files(conn, 7, 31))["documents"]] == [
+            "late-itk.pdf"
+        ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("shared", [True, False])
 async def test_company_slot_replacement_uses_previous_company_identity(pool, shared):
     async with pool.acquire() as conn:
