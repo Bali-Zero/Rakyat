@@ -43,16 +43,31 @@ async def types(conn):
     """)
 
 
-async def practice(conn, pid, type_id, *, completed=NOVEMBER, status="completed", total=None):
+async def practice(
+    conn, pid, type_id, *, completed=NOVEMBER, status="completed", total=None, logged=True
+):
+    """Production's path to a completed practice: the status UPDATE fires trg_practice_status_log.
+
+    `completed` is the completion_date; the log row is stamped the same instant unless `logged`
+    is a datetime (the log says another time) or False (inserted already completed, no log row).
+    """
+    direct = status == "completed" and logged is False
     await conn.execute(
         """INSERT INTO practices(id,client_id,assigned_to,client_visible,status,payment_status,
                practice_type_id,completion_date,updated_at) VALUES($1,31,$2,true,$3,'paid',$4,$5,now())""",
         pid,
         EMAIL,
-        status,
+        status if direct or status != "completed" else "on_process",
         type_id,
         completed,
     )
+    if status == "completed" and not direct:
+        await conn.execute("UPDATE practices SET status='completed' WHERE id=$1", pid)
+        await conn.execute(
+            "UPDATE practice_status_log SET changed_at=$2 WHERE practice_id=$1 AND new_status='completed'",
+            pid,
+            completed if logged is True else logged,
+        )
     if total is not None:
         await conn.execute("INSERT INTO invoices(practice_id,amount_idr) VALUES($1,$2)", pid, total)
 
@@ -127,6 +142,70 @@ async def test_cohort_is_completion_in_november_in_bali(pool, completed, cohort)
     await upload(pool, 20, "document_1")
     async with pool.acquire() as conn:
         assert len(await events(conn, 20)) == int(cohort)
+
+
+OCTOBER = datetime(2026, 10, 20, 4, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_the_cohort_follows_the_status_log_not_an_edited_completion_date(pool):  # noqa: F811
+    async with pool.acquire() as conn:
+        await types(conn)
+        # Completed in October, then completion_date was edited into November: out.
+        await practice(conn, 70, 4, completed=NOVEMBER, logged=OCTOBER)
+        # Completed in November, completion_date edited back into October: still in.
+        await practice(conn, 71, 4, completed=OCTOBER, logged=NOVEMBER)
+        assert not (await view(conn, 70))["legacy_proof"]
+        assert (await view(conn, 71))["legacy_proof"]
+    await upload(pool, 70, "document_1")
+    await upload(pool, 71, "document_1")
+    async with pool.acquire() as conn:
+        assert await events(conn, 70) == []
+        assert len(await events(conn, 71)) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_practice_inserted_already_completed_has_no_log_row_and_is_not_cohort(pool):  # noqa: F811
+    async with pool.acquire() as conn:
+        await types(conn)
+        await practice(conn, 72, 4, logged=False)
+        await practice(conn, 73, 6, logged=False)
+        assert not await conn.fetchval(
+            "SELECT count(*) FROM practice_status_log WHERE practice_id=72"
+        )
+        assert not (await view(conn, 72))["legacy_proof"]
+        assert not (await view(conn, 73))["slots"][0]["can_repair"]
+    await upload(pool, 72, "document_1")
+    async with pool.acquire() as conn:
+        assert await events(conn, 72) == []
+
+
+@pytest.mark.asyncio
+async def test_a_reopened_practice_completed_again_in_november_is_cohort_by_its_latest_row(pool):  # noqa: F811
+    async with pool.acquire() as conn:
+        await types(conn)
+        # October completion, reopened, completed again in November: the LATEST completed row counts.
+        await practice(conn, 74, 4, completed=OCTOBER)
+        await conn.execute("UPDATE practices SET status='on_process' WHERE id=74")
+        await conn.execute("UPDATE practices SET status='completed' WHERE id=74")
+        await conn.execute(
+            "UPDATE practice_status_log SET changed_at=$1 WHERE id=(SELECT max(id) FROM practice_status_log WHERE practice_id=74)",
+            NOVEMBER,
+        )
+        # The reverse order: completed in November, reopened and completed again in October.
+        await practice(conn, 75, 4, completed=NOVEMBER)
+        await conn.execute("UPDATE practices SET status='on_process' WHERE id=75")
+        await conn.execute("UPDATE practices SET status='completed' WHERE id=75")
+        await conn.execute(
+            "UPDATE practice_status_log SET changed_at=$1 WHERE id=(SELECT max(id) FROM practice_status_log WHERE practice_id=75)",
+            datetime(2026, 12, 2, tzinfo=UTC),
+        )
+        # Back in November but already delivered: no completion row -> only without one.
+        await practice(conn, 76, 4)
+        await conn.execute("INSERT INTO practice_delivery_completions VALUES(76,'ext_b1_voa','x')")
+        assert (await view(conn, 74))["legacy_proof"]
+        assert not (await view(conn, 75))["legacy_proof"]
+        assert not (await view(conn, 76))["legacy_proof"]
 
 
 @pytest.mark.asyncio

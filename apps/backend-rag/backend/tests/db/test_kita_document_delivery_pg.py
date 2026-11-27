@@ -69,6 +69,7 @@ async def pool(monkeypatch):
         async with db.acquire() as conn:
             await conn.execute(SQL_BASE)
             for filename in (
+                "310_practice_status_log.sql",
                 "383_practice_delivery.sql",
                 "384_delivery_bonus.sql",
                 "385_practice_visa_followups.sql",
@@ -388,6 +389,10 @@ async def test_practice_completed_before_final_delivery_can_still_receive_its_pe
     # Closed by a status edit before Final delivery existed (2026-11-24): no completion record.
     async with pool.acquire() as conn:
         await conn.execute("UPDATE practices SET status='completed' WHERE id=7")
+        # The status log (trigger) is the cohort anchor: this closure predates the November cohort.
+        await conn.execute(
+            "UPDATE practice_status_log SET changed_at='2026-10-20 04:00+00' WHERE practice_id=7"
+        )
         view = await service.state(conn, await service.practice(conn, 7, STAFF), STAFF)
     assert not view["delivery_recorded"]
     assert view["slots"][1]["can_repair"] and not view["slots"][0]["can_repair"]
