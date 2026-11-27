@@ -4468,6 +4468,39 @@ def test_d31_teeth_a_date_the_rule_reads_is_caught_in_a_log_line_and_in_an_answe
     assert privacy.leaks(forbidden, privacy.response_surface(clean)) == []
 
 
+def test_d30_teeth_clock_and_random_log_values_are_masked_inside_the_call_window():
+    low = datetime(2030, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    high = low + timedelta(seconds=2)
+    token = "000377"
+    request_timestamp = "2030-01-02T03:04:06.000377+00:00"
+    request_uuid = "000377aa-0000-4000-8000-000000000000"
+    records = [
+        _record(extra={"timestamp": request_timestamp}),
+        logging.LogRecord(
+            "zz.teeth", logging.WARNING, __file__, 1, "[%s] POST", (request_uuid,), None
+        ),
+    ]
+
+    assert privacy.leaks({token}, privacy.log_surface(records)) == [token]
+    assert privacy.leaks({token}, privacy.log_surface(records, clock_window=(low, high))) == []
+
+
+def test_d30_teeth_nonvolatile_values_stay_scanned_when_clock_values_are_masked():
+    low = datetime(2030, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
+    high = low + timedelta(seconds=2)
+    token = "000377"
+    for value in (
+        "prefix-000377-suffix",
+        "000377aa-0000-1000-8000-000000000000",
+        "2020-01-02T03:04:05.000377+00:00",
+    ):
+        record = _record(extra={"value": value})
+        assert privacy.leaks({token}, privacy.log_surface([record])) == [token], value
+        assert privacy.leaks({token}, privacy.log_surface([record], clock_window=(low, high))) == [
+            token
+        ], value
+
+
 def test_d31_teeth_an_undeclared_run_in_a_raw_body_is_caught():
     raw = TEETH_REQUESTS["raw"] + b" ZZ9191919"
     assert privacy.undeclared_runs(VOCAB, raw, [TEETH_PROBE]) == ["ZZ9191919"]
@@ -4536,7 +4569,9 @@ async def test_d30_route_logs_answers_and_audit_carry_no_identifier_hash_name_or
     log_set, answer_set = privacy.case_sets(VOCAB, requests, spec["ids"], ())
     for resp in responses:
         assert privacy.leaks(answer_set, privacy.response_surface(resp.text)) == [], case
-    assert privacy.leaks(log_set, privacy.log_surface(records, sentinels)) == [], case
+    # the clock-window mask never hides a probe: no forbidden token is itself a uuid4
+    assert [t for t in log_set if privacy.UUID4.search(t)] == [], case
+    assert privacy.leaks(log_set, privacy.log_surface(records, sentinels, (low, high))) == [], case
 
     # one audit row per call, no request body, no token in any scanned column
     rows, types = await privacy.audit_snapshot(conn)
