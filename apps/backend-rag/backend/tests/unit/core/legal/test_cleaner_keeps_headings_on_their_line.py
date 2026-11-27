@@ -241,6 +241,10 @@ def test_innocence_joins_bagian_ordinal_prose() -> None:
         cleaner.clean("diatur dalam\nBagian Kedua Belas ayat")
         == "diatur dalam Bagian Kedua Belas ayat"
     )
+    assert (
+        cleaner.clean("diatur dalam\nBagian Kedua Belas Tiga")
+        == "diatur dalam Bagian Kedua Belas Tiga"
+    )
 
 
 @pytest.mark.parametrize(

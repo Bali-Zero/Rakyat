@@ -365,7 +365,8 @@ CONTEXT_TEMPLATE = (
 _BAGIAN_ORDINAL = (
     r"(?i:(?:Pertama|Ke(?:satu|sepuluh|sebelas"
     r"|(?:dua|tiga|empat|lima|enam|tujuh|delapan|sembilan)"
-    r"(?:[^\S\n]*(?:belas|puluh)(?:[^\S\n]*(?:satu|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan))?)?))"
+    r"(?:[^\S\n]*belas"
+    r"|[^\S\n]*puluh(?:[^\S\n]*(?:satu|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan))?)?))"
     r"|\d+)"
 )
 STRUCTURAL_HEADING_LINE = (
