@@ -468,6 +468,19 @@ class _FakeConn:
         self.updated_doc_rows = updated_doc_rows or []
         self.executed: list[tuple[str, tuple[Any, ...]]] = []
         self.fetched: list[tuple[str, tuple[Any, ...]]] = []
+        # Ordered ("enter",) / ("exec", sql) / ("exit", exception-class-name-or-None).
+        self.tx_log: list[tuple[str, ...]] = []
+
+    @asynccontextmanager
+    async def transaction(self):
+        self.tx_log.append(("enter",))
+        try:
+            yield
+        except BaseException as exc:
+            self.tx_log.append(("exit", type(exc).__name__))
+            raise
+        else:
+            self.tx_log.append(("exit", "None"))
 
     async def fetchrow(self, sql: str, *args: Any) -> dict[str, Any] | None:
         self.fetched.append((sql, args))
@@ -481,6 +494,7 @@ class _FakeConn:
 
     async def execute(self, sql: str, *args: Any) -> str:
         self.executed.append((sql, args))
+        self.tx_log.append(("exec", sql))
         return "UPDATE 1"
 
 
