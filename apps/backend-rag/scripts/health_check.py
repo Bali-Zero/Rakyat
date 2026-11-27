@@ -244,7 +244,6 @@ async def check_environment_variables() -> dict[str, Any]:
 
         # Optional but recommended
         recommended_vars = {
-            "GOOGLE_API_KEY": settings.google_api_key,
             "DATABASE_URL": os.getenv("DATABASE_URL"),
         }
 

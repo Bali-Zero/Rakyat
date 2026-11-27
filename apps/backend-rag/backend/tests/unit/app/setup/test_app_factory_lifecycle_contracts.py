@@ -101,10 +101,6 @@ def _configure_runtime(
             "backend.services.rag.agentic.tools",
             close_agentic_tools_client=AsyncMock(),
         ),
-        "backend.services.llm_clients.openrouter_client": _module(
-            "backend.services.llm_clients.openrouter_client",
-            openrouter_client=SimpleNamespace(close=AsyncMock()),
-        ),
         "backend.llm.ollama_client": _module(
             "backend.llm.ollama_client",
             close_ollama_client=AsyncMock(),

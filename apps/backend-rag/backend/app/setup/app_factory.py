@@ -653,16 +653,6 @@ async def lifespan(app: FastAPI):
 
     # LLM provider HTTP client cleanups (S04 solidification)
     try:
-        from backend.services.llm_clients.openrouter_client import openrouter_client
-
-        await openrouter_client.close()
-        logger.info("✅ OpenRouter module client closed")
-    except ImportError:
-        pass
-    except Exception as e:
-        logger.warning("⚠️ Error closing OpenRouter client: %s", e)
-
-    try:
         from backend.llm.ollama_client import close_ollama_client
 
         await close_ollama_client()

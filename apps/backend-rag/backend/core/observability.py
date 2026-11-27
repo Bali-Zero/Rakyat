@@ -59,19 +59,15 @@ def is_enabled() -> bool:
 def init_observability(
     service_name: str = "nuzantara-rag",
     *,
-    instrument_google_genai: bool = True,
     instrument_openai: bool = True,
 ) -> Any | None:
     """Initialize Langfuse singleton + OpenInference instrumentation.
 
     Auto-traces:
-      - google-genai SDK calls — covers `GenAIClient.generate_content`,
-        `generate_content_stream`, and `generate_structured` (PR #311).
       - OpenAI SDK calls — covers DeepSeek and Ollama clients which both
         ship through `openai.AsyncOpenAI`.
 
     Per-instrumentor opt-out via env var (overrides the kwargs above):
-      `LANGFUSE_INSTRUMENT_GOOGLE_GENAI=false`
       `LANGFUSE_INSTRUMENT_OPENAI=false`
 
     Returns the Langfuse client on success, None if disabled or on error.
@@ -117,8 +113,6 @@ def init_observability(
             # Each instrumentor is gated by both the kwarg AND a per-env-var
             # so an operator can disable a single broken instrumentor at
             # runtime via `fly secrets set` without redeploy.
-            if instrument_google_genai and _instrument_enabled("GOOGLE_GENAI"):
-                _try_instrument_google_genai()
             if instrument_openai and _instrument_enabled("OPENAI"):
                 _try_instrument_openai()
 
@@ -164,28 +158,6 @@ def _build_trace_config() -> Any:
         hide_input_text=not trace_messages,
         hide_output_text=not trace_messages,
     ), trace_messages
-
-
-def _try_instrument_google_genai() -> None:
-    """Install OpenInference google-genai auto-instrumentation (idempotent).
-
-    Covers every Gemini call routed through our `GenAIClient` — including
-    `generate_content`, `generate_content_stream`, and the
-    `generate_structured` method introduced in PR #311.
-    """
-    try:
-        from openinference.instrumentation.google_genai import GoogleGenAIInstrumentor
-
-        config, trace_messages = _build_trace_config()
-        instr = GoogleGenAIInstrumentor()
-        if not instr.is_instrumented_by_opentelemetry:
-            instr.instrument(config=config)
-            logger.info(
-                "langfuse.google_genai_instrumentation.enabled hide_messages=%s",
-                not trace_messages,
-            )
-    except Exception as exc:
-        logger.warning("langfuse.google_genai_instrumentation.failed error=%s", exc)
 
 
 def _try_instrument_openai() -> None:

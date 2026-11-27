@@ -64,11 +64,17 @@ def kg_extractor(mock_llm_gateway):
 @pytest.fixture
 def kg_pipeline(mock_db_pool):
     """Create KGPipeline with mocked dependencies"""
+    from backend.services.knowledge_graph.extractor import ExtractionResult
+
     config = PipelineConfig(batch_size=10, use_coreference=True)
+    extractor = MagicMock()
+    extractor.extract = AsyncMock(
+        return_value=ExtractionResult(chunk_id="test", entities=[], relations=[])
+    )
 
     with patch("backend.services.knowledge_graph.pipeline.asyncpg.create_pool") as mock_pool:
         mock_pool.return_value = mock_db_pool
-        pipeline = KGPipeline(config=config)
+        pipeline = KGPipeline(config=config, extractor=extractor)
         return pipeline
 
 

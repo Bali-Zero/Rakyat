@@ -109,13 +109,6 @@ class FakeValidator:
         return True
 
 
-@pytest.fixture(autouse=True)
-def fake_gemini_extractor(monkeypatch: pytest.MonkeyPatch) -> None:
-    from backend.services.knowledge_graph import extractor_gemini
-
-    monkeypatch.setattr(extractor_gemini, "GeminiKGExtractor", FakeExtractor)
-
-
 def make_pipeline(**overrides: Any) -> KGPipeline:
     options = {
         "use_coreference": False,
@@ -126,7 +119,7 @@ def make_pipeline(**overrides: Any) -> KGPipeline:
     }
     options.update(overrides)
     config = PipelineConfig(**options)
-    return KGPipeline(config)
+    return KGPipeline(config, extractor=FakeExtractor())
 
 
 def test_pipeline_stats_to_dict_includes_duration_when_complete() -> None:

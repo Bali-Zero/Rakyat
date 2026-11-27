@@ -22,8 +22,8 @@ class TestModelType:
 
     def test_model_type_values(self):
         """Test ModelType enum values"""
-        assert ModelType.GEMINI_FLASH.value == "gemini-3.5-flash"
-        assert ModelType.GEMINI_FLASH_FALLBACK.value == "gemini-2.5-flash"
+        assert ModelType.GEMINI_FLASH.value == "claude-sonnet-5-5"
+        assert ModelType.GEMINI_FLASH_FALLBACK.value == "claude-sonnet-5-5"
 
     def test_model_type_enum(self):
         """Test ModelType enum creation"""
