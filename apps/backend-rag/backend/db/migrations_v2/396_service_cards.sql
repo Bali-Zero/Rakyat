@@ -8,7 +8,7 @@
 -- Nothing reads these tables until SERVICE_CARDS_SEEDING_CODES lists a code.
 
 CREATE TABLE service_cards (
-    practice_type_id integer PRIMARY KEY REFERENCES practice_types(id),
+    practice_type_id integer PRIMARY KEY REFERENCES practice_types(id) ON DELETE CASCADE,
     block text NOT NULL CHECK (block IN ('visa', 'company', 'tax')),
     visa_type_code text,
     stage text NOT NULL DEFAULT 'new' CHECK (stage IN ('new', 'extension', 'conversion')),

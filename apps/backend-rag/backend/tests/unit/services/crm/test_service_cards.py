@@ -341,12 +341,24 @@ async def test_no_card_is_legacy() -> None:
 
 
 @pytest.mark.asyncio
-async def test_seeding_never_overwrites_or_deletes() -> None:
+async def test_seeding_twice_issues_identical_inserts_and_never_overwrites_or_deletes() -> None:
+    from backend.app.routers import crm_practices
+
+    seed_required_documents_from_card = getattr(
+        crm_practices, "seed_required_documents_from_card", None
+    )
+    assert seed_required_documents_from_card is not None, "the router does not seed from cards"
+
+    _pool_unused, conn = _pool([], ACTIVE_CARD, CARD_DOCS)
     with armed("visa_c1_tourism"):
-        conn = await _create(ACTIVE_CARD)
-    sql = _seed_calls(conn)[0].args[0]
-    assert "ON CONFLICT (practice_id, document_type) DO NOTHING" in sql
-    assert "DO UPDATE" not in sql.upper()
+        first = await seed_required_documents_from_card(conn, 601, 14, "staff-member")
+        second = await seed_required_documents_from_card(conn, 601, 14, "staff-member")
+    assert first == second == 2
+    calls = _seed_calls(conn)
+    assert len(calls) == 2
+    assert calls[0].args == calls[1].args
+    assert "ON CONFLICT (practice_id, document_type) DO NOTHING" in calls[0].args[0]
+    assert "DO UPDATE" not in calls[0].args[0].upper()
     assert not [
         c
         for c in conn.execute.await_args_list
@@ -450,3 +462,8 @@ def test_migration_has_rollback_guarded_grant_and_no_visa_types_fk() -> None:
     )
     assert "ON CONFLICT" not in forward
     assert "JOIN practice_types pt ON pt.code = v.code" in forward
+    assert "v.sort_order, true, 'migration_396'" in forward
+    assert (
+        "practice_type_id integer PRIMARY KEY REFERENCES practice_types(id) ON DELETE CASCADE"
+        in forward
+    )
