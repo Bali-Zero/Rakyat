@@ -53,7 +53,7 @@ STAFF = {"email": "consultant@example.test", "role": "consultant"}
 
 @pytest_asyncio.fixture
 async def pool(monkeypatch):
-    dsn = os.environ.get("TEST_DATABASE_URL") or os.environ.get("NUZ_UNIVERSAL_PG_DSN", "")
+    dsn = os.environ.get("TEST_DATABASE_URL", "")
     url = urlsplit(dsn)
     if not dsn or url.hostname not in {"localhost", "127.0.0.1", "::1"} or "test" not in url.path:
         pytest.skip("Requires a local test database, provided by the backend CI shard")

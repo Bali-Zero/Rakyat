@@ -449,3 +449,87 @@ async def test_get_matter_detail_does_not_fetch_intelligence_for_tax_matter() ->
     assert r.status_code == 200
     assert r.json()["matter"]["approved_intelligence"]["available"] is False
     mock_conn.fetch.assert_not_awaited()
+
+
+# ── completed matter: the wording follows which final documents are visible ──────
+
+
+def test_shape_matter_detail_partial_completion_says_the_rest_will_follow() -> None:
+    detail = _shape_matter_detail(_row(status="completed"), "partial")
+    assert detail["status_label"] == "Completed"
+    assert detail["description"] == (
+        "The first documents are delivered; the remaining documents will follow."
+    )
+
+
+@pytest.mark.parametrize("wording", [None, "full", "neutral", "legacy"])
+def test_shape_matter_detail_other_wordings_keep_the_complete_text(wording) -> None:
+    detail = _shape_matter_detail(_row(status="completed"), wording)
+    assert detail["description"] == "This matter is complete."
+
+
+def test_shape_matter_detail_partial_only_changes_a_completed_matter() -> None:
+    detail = _shape_matter_detail(_row(status="in_progress"), "partial")
+    assert detail["description"] == "We are working on this now."
+
+
+def _detail_client(monkeypatch, *, status, helper):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from backend.app.dependencies import get_database_pool
+    from backend.app.routers import portal_matters
+    from backend.app.routers.portal import get_current_client
+
+    app = FastAPI()
+    app.include_router(portal_matters.router)
+    conn = AsyncMock()
+    conn.fetchrow.return_value = _row(id=11, title="Visa", category="visa", status=status)
+
+    class _Pool:
+        def acquire(self):
+            ctx = AsyncMock()
+            ctx.__aenter__.return_value = conn
+            ctx.__aexit__.return_value = False
+            return ctx
+
+    monkeypatch.setattr(portal_matters, "documents_pending", helper)
+    app.dependency_overrides[get_current_client] = lambda: {"client_id": 42}
+    app.dependency_overrides[get_database_pool] = lambda: _Pool()
+    return TestClient(app).get("/api/portal/matters/11")
+
+
+def test_matter_detail_route_partial(monkeypatch) -> None:
+    from backend.services.crm.delivery_progress import DeliveryProgress
+
+    r = _detail_client(
+        monkeypatch,
+        status="completed",
+        helper=AsyncMock(return_value=DeliveryProgress(True, True, False)),
+    )
+    assert r.status_code == 200
+    assert r.json()["matter"]["description"].startswith("The first documents are delivered")
+
+
+def test_matter_detail_route_full_and_no_policy_keep_the_text(monkeypatch) -> None:
+    from backend.services.crm.delivery_progress import DeliveryProgress
+
+    for answer in (DeliveryProgress(False, True, True), None):
+        r = _detail_client(monkeypatch, status="completed", helper=AsyncMock(return_value=answer))
+        assert r.status_code == 200
+        assert r.json()["matter"]["description"] == "This matter is complete."
+
+
+def test_matter_detail_route_helper_failure_keeps_the_text_and_200(monkeypatch) -> None:
+    r = _detail_client(
+        monkeypatch, status="completed", helper=AsyncMock(side_effect=RuntimeError("db gone"))
+    )
+    assert r.status_code == 200
+    assert r.json()["matter"]["description"] == "This matter is complete."
+
+
+def test_matter_detail_route_asks_nothing_of_an_open_matter(monkeypatch) -> None:
+    helper = AsyncMock(side_effect=AssertionError("asked"))
+    r = _detail_client(monkeypatch, status="in_progress", helper=helper)
+    assert r.status_code == 200
+    helper.assert_not_awaited()
