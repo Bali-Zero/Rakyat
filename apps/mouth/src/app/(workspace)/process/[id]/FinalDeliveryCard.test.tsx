@@ -1212,4 +1212,287 @@ describe("Final delivery", () => {
     expect(screen.queryByText("Bonus recorded")).toBeNull();
     expect(screen.queryByText("This service carries no bonus.")).toBeNull();
   });
+  describe("the first proof completes the practice (step B)", () => {
+    const delivered = (extras: Record<string, unknown> = {}) => ({
+      ...initial,
+      status: "completed",
+      delivery_recorded: true,
+      bonus_event: "electronic_visa_issued",
+      visa_followup: followup,
+      slots: [
+        slot("electronic_visa", "Electronic Visa", { document_id: 71 }),
+        slot("itk", "ITK", { can_repair: true }),
+      ],
+      ...extras,
+    });
+    it("keeps postpone, escalate and confirm for the manager of a completed practice", async () => {
+      requests.get.mockResolvedValue(delivered());
+      requests.post.mockResolvedValue({ ...followup, can_postpone: false });
+      const { user } = setup();
+      await user.click(
+        await screen.findByRole("button", { name: /Client has not entered/ }),
+      );
+      await user.type(
+        screen.getByLabelText("Private staff note about the client’s entry"),
+        "Client is abroad.",
+      );
+      await user.click(
+        screen.getByRole("button", { name: /Confirm postponement/ }),
+      );
+      await waitFor(() =>
+        expect(requests.post).toHaveBeenCalledWith(
+          base + "/visa-followup/postpone",
+          { note: "Client is abroad." },
+        ),
+      );
+      cleanup();
+      // The permit slot cannot take a file (an older API sends no can_repair): the action still works.
+      requests.post.mockClear();
+      requests.get.mockResolvedValue(
+        delivered({
+          slots: [
+            slot("electronic_visa", "Electronic Visa", { document_id: 71 }),
+            slot("itk", "ITK"),
+          ],
+        }),
+      );
+      const again = setup();
+      await again.user.click(
+        await screen.findByRole("button", { name: /Client has not entered/ }),
+      );
+      await again.user.type(
+        screen.getByLabelText("Private staff note about the client’s entry"),
+        "Client is still abroad.",
+      );
+      await again.user.click(
+        screen.getByRole("button", { name: /Confirm postponement/ }),
+      );
+      await waitFor(() =>
+        expect(requests.post).toHaveBeenCalledWith(
+          base + "/visa-followup/postpone",
+          { note: "Client is still abroad." },
+        ),
+      );
+      cleanup();
+      requests.get.mockResolvedValue(delivered());
+      setup("paid", false); // a viewer still gets no action
+      await screen.findByText("View-only access");
+      expect(
+        screen.queryByRole("button", { name: /Client has not entered/ }),
+      ).toBeNull();
+    });
+    const conditional = (extras: Record<string, unknown> = {}) =>
+      delivered({
+        visa_followup: null,
+        slots: [
+          slot("electronic_visa", "Electronic Visa", { document_id: 71 }),
+          slot("manpower", "Manpower", {
+            condition: "if filed separately",
+            can_repair: true,
+          }),
+        ],
+        ...extras,
+      });
+    it("offers the waiver of an unfilled conditional slot only on a delivered practice", async () => {
+      requests.get.mockResolvedValue(conditional());
+      requests.post.mockResolvedValue(
+        conditional({
+          slots: [
+            slot("electronic_visa", "Electronic Visa", { document_id: 71 }),
+            slot("manpower", "Manpower", {
+              condition: "if filed separately",
+              waiver_reason: "Not filed separately",
+            }),
+          ],
+        }),
+      );
+      const { user, complete } = setup();
+      await user.click(
+        await screen.findByRole("button", { name: "Mark as not applicable" }),
+      );
+      await user.type(
+        screen.getByLabelText("Reason this requirement does not apply"),
+        "Not filed separately",
+      );
+      await user.click(screen.getByRole("button", { name: "Save reason" }));
+      await waitFor(() =>
+        expect(requests.post).toHaveBeenCalledWith(
+          base + "/slots/manpower/waive",
+          { reason: "Not filed separately" },
+        ),
+      );
+      expect(complete).not.toHaveBeenCalled();
+      cleanup();
+      // An older API without delivery_recorded, and a manager-less viewer: no waiver.
+      requests.get.mockResolvedValue(
+        conditional({ delivery_recorded: undefined }),
+      );
+      setup();
+      await screen.findByText("Manpower");
+      expect(
+        screen.queryByRole("button", { name: "Mark as not applicable" }),
+      ).toBeNull();
+      cleanup();
+      requests.get.mockResolvedValue(conditional());
+      setup("paid", false);
+      await screen.findByText("View-only access");
+      expect(
+        screen.queryByRole("button", { name: "Mark as not applicable" }),
+      ).toBeNull();
+    });
+    it("shows Upload only on an empty slot the server says can take a file", async () => {
+      requests.get.mockResolvedValue(delivered());
+      setup();
+      expect(await screen.findByLabelText("Upload ITK")).toBeEnabled();
+      expect(screen.queryByLabelText(/Replace|Restore/)).toBeNull();
+      expect(screen.queryByLabelText("Upload E-visa")).toBeNull();
+      cleanup();
+      requests.get.mockResolvedValue(
+        delivered({
+          slots: [
+            slot("electronic_visa", "Electronic Visa", { document_id: 71 }),
+            slot("itk", "ITK"), // an older API: no can_repair
+          ],
+        }),
+      );
+      setup();
+      await screen.findByText("ITK");
+      expect(screen.queryByLabelText(/Upload|Replace|Restore/)).toBeNull();
+    });
+    it("enables Complete on the first proof and names it; an older API keeps today's rule", async () => {
+      const proven = {
+        ...initial,
+        proof_ready: true,
+        slots: [
+          slot("electronic_visa", "Electronic Visa", { document_id: 21 }),
+          requiredSlots[1],
+        ],
+      };
+      requests.get.mockResolvedValue(proven);
+      requests.post.mockResolvedValue({ ...proven, status: "completed" });
+      const { user, complete } = setup();
+      const deliver = await screen.findByRole("button", {
+        name: "Complete practice",
+      });
+      expect(deliver).toBeEnabled();
+      expect(
+        screen.getByText("The first proof completes the practice: E-visa"),
+      ).toBeVisible();
+      await user.click(deliver);
+      await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+      cleanup();
+      requests.get.mockResolvedValue({ ...proven, proof_ready: undefined });
+      setup();
+      expect(
+        await screen.findByRole("button", { name: "Complete practice" }),
+      ).toBeDisabled();
+      expect(screen.getByText("1 document remaining")).toBeVisible();
+    });
+    it("shows the reason of an error raised before sending, never 'could not confirm'", async () => {
+      requests.get.mockResolvedValue(initial);
+      const { user } = setup();
+      const input = await screen.findByLabelText("Upload ITK");
+      const reader = vi
+        .spyOn(FileReader.prototype, "readAsDataURL")
+        .mockImplementation(function (this: FileReader) {
+          this.onerror?.(new ProgressEvent("error") as never);
+        });
+      await user.upload(
+        input,
+        new File(["stay"], "stay.pdf", { type: "application/pdf" }),
+      );
+      expect(
+        await screen.findByText("The file could not be read. Choose it again."),
+      ).toBeVisible();
+      reader.mockRestore();
+      requests.identity = { sub: "staff-b", epoch: 1 }; // the session changed after the card loaded
+      await user.upload(
+        screen.getByLabelText("Upload ITK"),
+        new File(["stay"], "stay.pdf", { type: "application/pdf" }),
+      );
+      expect(
+        await screen.findByText("Session changed. Reload the practice."),
+      ).toBeVisible();
+      expect(screen.queryByText(/could not confirm/)).toBeNull();
+      expect(requests.post).not.toHaveBeenCalled();
+      requests.identity = { sub: "staff-a", epoch: 1 };
+    });
+    it("reads the refreshed state after a 502 on Complete: completed confirms, otherwise the error shows", async () => {
+      const proven = {
+        ...initial,
+        proof_ready: true,
+        slots: [
+          slot("electronic_visa", "Electronic Visa", { document_id: 21 }),
+          requiredSlots[1],
+        ],
+      };
+      requests.get
+        .mockResolvedValueOnce(proven)
+        .mockResolvedValue({ ...proven, status: "completed" });
+      requests.post.mockRejectedValue(new ApiError("Bad gateway", 502));
+      const first = setup();
+      await first.user.click(
+        await screen.findByRole("button", { name: "Complete practice" }),
+      );
+      await waitFor(() => expect(first.complete).toHaveBeenCalledOnce());
+      expect(
+        await screen.findByText(
+          "Final documents delivered. Practice completed.",
+        ),
+      ).toBeVisible();
+      cleanup();
+      requests.get.mockReset();
+      requests.get.mockResolvedValue(proven);
+      requests.post.mockRejectedValue(new ApiError("Service unavailable", 503));
+      const second = setup();
+      await second.user.click(
+        await screen.findByRole("button", { name: "Complete practice" }),
+      );
+      expect(await screen.findByText("Service unavailable")).toBeVisible();
+      expect(second.complete).not.toHaveBeenCalled();
+    });
+    it("keeps a received 502 on an upload as the error instead of claiming it could not be confirmed", async () => {
+      requests.get.mockResolvedValue(initial);
+      requests.post.mockRejectedValue(new ApiError("Bad gateway", 502));
+      const { user } = setup();
+      await user.upload(
+        await screen.findByLabelText("Upload ITK"),
+        new File(["stay"], "stay.pdf", { type: "application/pdf" }),
+      );
+      expect(await screen.findByText("Bad gateway")).toBeVisible();
+      expect(screen.queryByText(/could not confirm/)).toBeNull();
+    });
+    it("shows the completed state and calls onComplete once when an upload was the first proof", async () => {
+      requests.get.mockResolvedValue({ ...initial, proof_ready: false });
+      requests.post.mockResolvedValue({
+        ...initial,
+        status: "completed",
+        delivery_recorded: true,
+        bonus_event: "electronic_visa_issued",
+        slots: [
+          slot("electronic_visa", "Electronic Visa", { document_id: 21 }),
+          slot("itk", "ITK — Visit Stay Permit", { can_repair: true }),
+        ],
+      });
+      const { user, complete } = setup();
+      fireEvent.change(
+        await screen.findByLabelText("Electronic Visa issue date"),
+        { target: { value: workDayOf() } },
+      );
+      await user.upload(
+        screen.getByLabelText("Upload E-visa"),
+        new File(["issued"], "visa.pdf", { type: "application/pdf" }),
+      );
+      expect(
+        await screen.findByText(
+          "Electronic Visa upload recorded. The practice is completed.",
+        ),
+      ).toBeVisible();
+      expect(complete).toHaveBeenCalledOnce();
+      expect(
+        screen.queryByRole("button", { name: "Complete practice" }),
+      ).toBeNull();
+      expect(await screen.findByLabelText("Upload ITK")).toBeEnabled();
+    });
+  });
 });
