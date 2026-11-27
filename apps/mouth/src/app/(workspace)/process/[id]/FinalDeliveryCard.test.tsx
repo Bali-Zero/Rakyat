@@ -835,4 +835,99 @@ describe("Final delivery", () => {
       screen.queryByLabelText("Agreed final documents, one title per line"),
     ).toBeNull();
   });
+
+  describe("on a completed practice", () => {
+    const closed = {
+      ...initial,
+      status: "completed",
+      slots: [
+        slot("electronic_visa", "Electronic Visa", { document_id: 71 }),
+        slot("itk", "ITK", { can_repair: true }),
+      ],
+    };
+
+    it("lets the manager postpone the visa follow-up", async () => {
+      requests.get.mockResolvedValue({ ...closed, visa_followup: followup });
+      requests.post.mockResolvedValue({
+        ...followup,
+        status: "awaiting_permit",
+        due_on: followup.final_due_on,
+        days_remaining: 30,
+        can_postpone: false,
+      });
+      const { user } = setup();
+      await user.click(
+        await screen.findByRole("button", { name: /Client has not entered/ }),
+      );
+      await user.type(
+        screen.getByLabelText("Private staff note about the client’s entry"),
+        "Entry still pending.",
+      );
+      await user.click(
+        screen.getByRole("button", {
+          name: /Confirm postponement to 2026-09-30/,
+        }),
+      );
+      expect(requests.post).toHaveBeenCalledWith(
+        base + "/visa-followup/postpone",
+        { note: "Entry still pending." },
+      );
+    });
+
+    const conditional = slot("manpower", "Final manpower authorisation", {
+      condition: "If included in order",
+      can_repair: true,
+    });
+
+    it("offers and posts the not-applicable waiver for an unfilled conditional slot", async () => {
+      requests.get.mockResolvedValue({
+        ...closed,
+        bonus_slot: null,
+        slots: [conditional],
+      });
+      requests.post.mockResolvedValueOnce({
+        ...closed,
+        bonus_slot: null,
+        slots: [{ ...conditional, waiver_reason: "Not in the order" }],
+      });
+      const { user } = setup();
+      await user.click(
+        await screen.findByRole("button", { name: "Mark as not applicable" }),
+      );
+      await user.type(
+        screen.getByLabelText("Reason this requirement does not apply"),
+        "Not in the order",
+      );
+      await user.click(screen.getByRole("button", { name: "Save reason" }));
+      expect(requests.post).toHaveBeenCalledWith(
+        base + "/slots/manpower/waive",
+        { reason: "Not in the order" },
+      );
+    });
+
+    it("does not offer the waiver to a viewer without delivery rights", async () => {
+      requests.get.mockResolvedValue({
+        ...closed,
+        bonus_slot: null,
+        slots: [conditional],
+      });
+      setup("paid", false);
+      await screen.findByText("View-only access");
+      expect(
+        screen.queryByRole("button", { name: "Mark as not applicable" }),
+      ).toBeNull();
+    });
+  });
+
+  it("names the e-visa as the document that completes a visa practice", async () => {
+    setup();
+    expect(
+      await screen.findByText("Uploading the E-visa completes the practice."),
+    ).toBeVisible();
+    expect(
+      screen.queryByText(
+        "The first final document you upload completes the practice.",
+      ),
+    ).toBeNull();
+  });
 });

@@ -187,9 +187,12 @@ async def test_concurrent_issue_one_bonus_and_first_proof_completion(pool):
 
 @pytest.mark.asyncio
 async def test_combined_renewal_completes_on_imk_upload_and_keeps_rate_gap(pool):
-    await service.waive(pool, 8, "document_3", STAFF, "No separate manpower filing in this order")
     result = await service.upload(
         pool, 8, "document_1", STAFF, final_file("combined-permit"), BackgroundTasks()
+    )
+    # The conditional manpower box is waived after the IMK proof already completed the case.
+    await service.waive(
+        pool, 8, "document_3", STAFF, "No separate manpower filing in this order", BackgroundTasks()
     )
     assert result["bonus_event"] == "kitas_imk_uploaded"
     assert result["status"] == "completed"
@@ -495,12 +498,14 @@ async def test_company_slot_replacement_uses_previous_company_identity(pool, sha
 
 @pytest.mark.asyncio
 async def test_completed_renewal_can_restore_a_missing_compound_permit_without_another_award(pool):
-    await service.waive(pool, 8, "document_3", STAFF, "Not in the original contract")
     original = await service.upload(
         pool, 8, "document_1", STAFF, final_file("old-combined"), BackgroundTasks()
     )
     old_id = original["slots"][0]["document_id"]
     await service.reuse(pool, 8, "document_2", STAFF, old_id, BackgroundTasks())
+    await service.waive(
+        pool, 8, "document_3", STAFF, "Not in the original contract", BackgroundTasks()
+    )
     await service.complete(pool, 8, STAFF, BackgroundTasks())
     async with pool.acquire() as conn:
         await conn.execute("UPDATE documents SET is_archived=true WHERE id=$1", old_id)
@@ -885,7 +890,9 @@ async def test_concurrent_uploads_of_different_slots_both_land_on_one_completion
 
 @pytest.mark.asyncio
 async def test_plain_upload_into_a_waived_slot_of_a_completed_practice_is_refused(pool):
-    await service.waive(pool, 8, "document_3", STAFF, "No separate manpower filing")
+    await service.waive(
+        pool, 8, "document_3", STAFF, "No separate manpower filing", BackgroundTasks()
+    )
     await service.upload(pool, 8, "document_1", STAFF, final_file("imk"), BackgroundTasks())
     with pytest.raises(HTTPException) as refused:
         await service.upload(
@@ -939,3 +946,111 @@ async def test_completed_custom_practice_names_its_documents_then_earns_on_the_p
     assert old["slots"][0]["document_id"]
     async with pool.acquire() as conn:
         assert (await counts(conn, 13))["events"] == 0
+
+
+@pytest.mark.asyncio
+async def test_waiver_after_the_imk_proof_keeps_one_event_ledger_row_and_completion(pool):
+    await service.upload(pool, 8, "document_1", STAFF, final_file("imk"), BackgroundTasks())
+    tasks = BackgroundTasks()
+    waived = await service.waive(pool, 8, "document_3", STAFF, "Not in the order", tasks)
+    assert waived["status"] == "completed" and waived["slots"][2]["waiver_reason"]
+    assert not tasks.tasks
+    async with pool.acquire() as conn:
+        assert await counts(conn, 8) == {"events": 1, "ledger": 0, "completions": 1, "timeline": 1}
+        assert await conn.fetchval("SELECT count(*) FROM hr_delivery_bonus_events") == 1
+
+
+@pytest.mark.asyncio
+async def test_a_completed_practice_refuses_waiving_a_required_or_filled_slot(pool):
+    await service.upload(pool, 8, "document_1", STAFF, final_file("imk"), BackgroundTasks())
+    for key in ("document_2", "document_1"):  # not conditional / filled
+        with pytest.raises(HTTPException) as refused:
+            await service.waive(pool, 8, key, STAFF, "Not applicable", BackgroundTasks())
+        assert refused.value.status_code == 409
+    # The conditional box is waivable, then it is no longer repairable, and a filled
+    # conditional box can never be waived.
+    await service.waive(pool, 8, "document_3", STAFF, "Not in the order", BackgroundTasks())
+
+
+@pytest.mark.asyncio
+async def test_waiving_a_filled_conditional_slot_of_a_completed_practice_is_refused(pool):
+    await service.upload(pool, 8, "document_1", STAFF, final_file("imk"), BackgroundTasks())
+    await service.upload(
+        pool, 8, "document_3", STAFF, final_file("manpower"), BackgroundTasks(), repair=True
+    )
+    with pytest.raises(HTTPException) as refused:
+        await service.waive(pool, 8, "document_3", STAFF, "Changed my mind", BackgroundTasks())
+    assert refused.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_waiving_the_conditional_evisa_turns_an_earlier_upload_into_the_proof(pool):
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """INSERT INTO practice_types VALUES(7,'kitas_working_onshore','Working KITAS onshore','kitas');
+               INSERT INTO hr_bonus_rates(practice_type_code,is_active,effective_from,amount_idr)
+               VALUES('kitas_working_onshore',true,'2025-01-01',200000)
+               ON CONFLICT (practice_type_code) DO UPDATE SET amount_idr=200000,
+                   forfeit_below_idr=NULL,is_active=true,effective_from='2025-01-01',effective_to=NULL"""
+        )
+        await add_practice(conn, 9, 7)
+    early = await service.upload(
+        pool, 9, "document_2", STAFF, final_file("eitas"), BackgroundTasks()
+    )
+    # The e-visa box is still open, so the e-ITAS alone is not yet the proof.
+    assert early["status"] == "on_process" and early["bonus_event"] is None
+    tasks = BackgroundTasks()
+    done = await service.waive(
+        pool, 9, "electronic_visa", STAFF, "Issued on a different route", tasks
+    )
+    assert done["status"] == "completed" and done["bonus_event"] == "service_delivered"
+    assert len(tasks.tasks) == 2
+    async with pool.acquire() as conn:
+        assert await counts(conn, 9) == {"events": 1, "ledger": 1, "completions": 1, "timeline": 1}
+        assert (
+            await conn.fetchval(
+                "SELECT event_kind FROM hr_delivery_bonus_events WHERE practice_id=9"
+            )
+            == "service_delivered"
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dead", ["is_archived=true", "deleted_at=now()"])
+async def test_migration_390_ignores_a_proof_whose_only_file_is_no_longer_live(pool, dead):
+    folder = Path(__file__).resolve().parents[2] / "db" / "migrations_v2"
+    migration = (folder / "390_first_proof_bonus.sql").read_text().split("-- === ROLLBACK ===")[0]
+    async with pool.acquire() as conn:
+        await add_practice(
+            conn,
+            20,
+            4,
+            status="completed",
+            completed_at=datetime(2026, 11, 17, 4, tzinfo=timezone.utc),
+        )
+        doc = await conn.fetchval(
+            "INSERT INTO documents(practice_id,client_id,file_id,file_name,status,client_visible)"
+            " VALUES(20,31,'f20','proof.pdf','active',false) RETURNING id"
+        )
+        await conn.execute(
+            "INSERT INTO practice_delivery_slots(practice_id,service_code,slot_key,document_id,updated_by)"
+            " VALUES(20,'ext_b1_voa','document_1',$1,'staff')",
+            doc,
+        )
+        await conn.execute(f"UPDATE documents SET {dead} WHERE id=$1", doc)
+        await conn.execute(migration)
+        assert await conn.fetchval("SELECT count(*) FROM hr_delivery_bonus_events") == 0
+
+
+@pytest.mark.asyncio
+async def test_completion_timeline_says_whether_more_documents_will_follow(pool):
+    async with pool.acquire() as conn:
+        await add_practice(conn, 9, 3)  # two slots
+        await add_practice(conn, 10, 4)  # one slot
+    await service.upload(pool, 9, "document_1", STAFF, final_file("eitap"), BackgroundTasks())
+    await service.upload(pool, 10, "document_1", STAFF, final_file("itk"), BackgroundTasks())
+    async with pool.acquire() as conn:
+        partial = await conn.fetchval("SELECT description FROM timeline_events WHERE practice_id=9")
+        whole = await conn.fetchval("SELECT description FROM timeline_events WHERE practice_id=10")
+    assert partial == "First final document delivered; the remaining documents will follow"
+    assert whole == "Final documents delivered"

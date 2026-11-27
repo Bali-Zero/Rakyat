@@ -139,6 +139,10 @@ function StaffDeliveryCard({
     !chooseCompany ||
     companies?.some((company) => String(company.company_id) === companyId);
 
+  // The service's bonus evidence is its proof unless waived; then any final document is.
+  const proofSlot = data?.slots.find(
+    (slot) => slot.key === data.bonus_slot && !slot.waiver_reason,
+  );
   const completedManager =
     practice.can_manage_delivery === true && data?.status === "completed";
   function repairable(slot?: Slot): boolean {
@@ -459,7 +463,7 @@ function StaffDeliveryCard({
                           practiceId={practice.id}
                           value={data.visa_followup}
                           busy={working}
-                          writable={Boolean(writable)}
+                          writable={Boolean(writable || completedManager)}
                           act={followupAction}
                         />
                       )}
@@ -485,7 +489,7 @@ function StaffDeliveryCard({
                             Confirm the existing permit covers both documents
                           </button>
                         )}
-                      {writable &&
+                      {editable &&
                         slot.condition &&
                         !saved &&
                         !waived &&
@@ -602,9 +606,11 @@ function StaffDeliveryCard({
                     ? "Ready to complete"
                     : data.needs_titles
                       ? "Name the required documents first."
-                      : data.slots.length
-                        ? "The first final document you upload completes the practice."
-                        : "Define the required documents first."}
+                      : proofSlot
+                        ? `Uploading the ${deliveryDocumentTitle(proofSlot)} completes the practice.`
+                        : data.slots.length
+                          ? "The first final document you upload completes the practice."
+                          : "Define the required documents first."}
               </p>
               <button
                 className={styles.completeButton}

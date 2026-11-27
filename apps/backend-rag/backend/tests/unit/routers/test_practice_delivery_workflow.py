@@ -198,7 +198,7 @@ async def test_visa_needs_a_first_proof_to_complete_and_itk_cannot_be_waived(db,
     done = await service.complete(pool, 7, STAFF, BackgroundTasks())
     assert done["status"] == "completed" and done["slots"][1]["document_id"] is None
     with pytest.raises(HTTPException) as required:
-        await service.waive(pool, 7, "itk", STAFF, "Pending arrival")
+        await service.waive(pool, 7, "itk", STAFF, "Pending arrival", BackgroundTasks())
     assert required.value.status_code == 409
     writes["record_delivery_bonus"].assert_not_awaited()
 
@@ -672,3 +672,31 @@ async def test_state_reports_the_current_bonus_rate_and_proof_readiness(db, writ
     assert view["bonus_rate"] == 0 and view["proof_ready"] is True
     conn.fetch.return_value = []
     assert (await service.state(conn, dict(PRACTICE)))["proof_ready"] is False
+
+
+@pytest.mark.asyncio
+async def test_accept_starts_no_visa_clock_when_the_only_event_is_service_delivered(db, writes):
+    pool, conn = db
+    # Only the e-ITAS exists and the e-visa box was waived: a service_delivered event is not
+    # an issuance receipt, so the visa follow-up must not start from the e-visa key.
+    conn.fetch.return_value = [
+        {
+            "slot_key": "electronic_visa",
+            "waiver_reason": "Other route",
+            "document_id": None,
+            "file_name": None,
+        },
+        {"slot_key": "itk", "waiver_reason": None, "document_id": 5, "file_name": "x.pdf"},
+    ]
+    writes["get_delivery_bonus"].return_value = {
+        "event_kind": "service_delivered",
+        "status": "pending",
+    }
+    await service.accept(conn, dict(PRACTICE), "electronic_visa", STAFF)
+    writes["record_visa_milestone"].assert_not_awaited()
+    writes["get_delivery_bonus"].return_value = {
+        "event_kind": "electronic_visa_issued",
+        "status": "pending",
+    }
+    await service.accept(conn, dict(PRACTICE), "electronic_visa", STAFF)
+    writes["record_visa_milestone"].assert_awaited_once()

@@ -28,7 +28,9 @@ WITH proof AS (
     FROM practices p
     JOIN practice_types pt ON pt.id = p.practice_type_id
     JOIN practice_delivery_slots s ON s.practice_id = p.id AND s.service_code = pt.code
-         AND s.document_id IS NOT NULL
+    JOIN documents d ON d.id = s.document_id AND d.practice_id = p.id AND d.client_id = p.client_id
+         AND NULLIF(d.file_id, '') IS NOT NULL AND d.deleted_at IS NULL
+         AND NOT COALESCE(d.is_archived, FALSE) AND d.status IS DISTINCT FROM 'deleted'
     WHERE p.status = 'completed'
       AND (p.completion_date AT TIME ZONE 'Asia/Makassar')::date >= DATE '2026-11-01'
       AND NOT EXISTS (SELECT 1 FROM practice_delivery_completions c WHERE c.practice_id = p.id)

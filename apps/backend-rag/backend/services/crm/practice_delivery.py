@@ -228,10 +228,14 @@ async def set_titles(pool: Any, practice_id: int, user: dict, titles: list[str])
         return await state(conn, p, user)
 
 
-async def waive(pool: Any, practice_id: int, key: str, user: dict, reason: str) -> dict:
+async def waive(
+    pool: Any, practice_id: int, key: str, user: dict, reason: str, tasks: BackgroundTasks
+) -> dict:
     async with pool.acquire() as conn, conn.transaction():
         p = await practice(conn, practice_id, user, lock=True)
-        require_open(p)
+        # A requirement found inapplicable after the first proof is still recorded.
+        if p["status"] != "completed":
+            require_open(p)
         slot = slot_for(await state(conn, p, user), key)
         if not slot["condition"] or slot["document_id"]:
             raise HTTPException(409, "Only unfilled conditional slots may be marked inapplicable")
@@ -247,8 +251,14 @@ async def waive(pool: Any, practice_id: int, key: str, user: dict, reason: str) 
             reason,
             user["email"],
         )
+        # Waiving an unfilled bonus slot can turn an earlier upload into the proof.
+        completed = await accept(conn, p, key, user)
         await audit(conn, practice_id, user["email"], f"Delivery slot {key} inapplicable: {reason}")
-        return await state(conn, p, user)
+        updated = await state(conn, {**p, "status": "completed"} if completed else p, user)
+    if completed:
+        notify_completed(pool, p, user, tasks)
+    await invalidate_delivery_cache(p)
+    return updated
 
 
 def upload_digest(encoded: str, file_name: str, mime_type: str) -> str:
@@ -743,8 +753,9 @@ async def accept(
     elif earns and kind == "service_delivered" and not open_case:
         await record_delivery_bonus(conn, p["id"], p["code"], p["assigned_to"], kind)
     # The permit clock starts only from a recorded issuance receipt.
+    receipt = await get_delivery_bonus(conn, p["id"])
     if view["bonus_trigger"] == "electronic_visa_issued" and (
-        key != "electronic_visa" or await get_delivery_bonus(conn, p["id"])
+        key != "electronic_visa" or (receipt or {}).get("event_kind") == "electronic_visa_issued"
     ):
         await record_visa_milestone(conn, p, key)
     if open_case and kind:
@@ -838,12 +849,16 @@ async def finish(conn: Any, p: dict, view: dict, user: dict) -> None:
         await record_delivery_bonus(conn, p["id"], p["code"], p["assigned_to"], "service_delivered")
     await audit(conn, p["id"], user["email"], "Final documents delivered and practice completed")
     if p["client_visible"] is not False:
+        remaining = any(not (s["document_id"] or s["waiver_reason"]) for s in view["slots"])
         await conn.execute(
             """INSERT INTO timeline_events(client_id,practice_id,event_type,title,description,event_date,client_visible,color,created_by)
-               VALUES($1,$2,'completion','Case completed','Final documents delivered',now(),true,'success',$3)""",
+               VALUES($1,$2,'completion','Case completed',$4,now(),true,'success',$3)""",
             p["client_id"],
             p["id"],
             user["email"],
+            "First final document delivered; the remaining documents will follow"
+            if remaining
+            else "Final documents delivered",
         )
 
 
