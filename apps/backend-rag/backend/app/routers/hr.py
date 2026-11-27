@@ -449,7 +449,7 @@ async def delivery_bonus_reviews(
                FROM hr_delivery_bonus_events e LEFT JOIN hr_employees emp ON emp.id=e.employee_id
                LEFT JOIN team_members tm ON tm.id=COALESCE(emp.team_member_id, e.original_team_member_id)
                LEFT JOIN practice_types pt ON pt.code=e.service_code
-               WHERE e.ledger_id IS NULL AND NOT e.payroll_ineligible
+               WHERE e.ledger_id IS NULL AND NOT e.payroll_ineligible AND NOT e.forfeited
                ORDER BY e.earned_at, e.practice_id LIMIT 100"""
         )
     return {"viewer_team_member_id": _get_user_id(current_user), "items": [dict(r) for r in rows]}
