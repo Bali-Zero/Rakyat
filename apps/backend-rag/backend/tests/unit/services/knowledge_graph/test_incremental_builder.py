@@ -76,85 +76,22 @@ class TestInit:
 
 
 class TestGetGeminiClient:
-    @patch("backend.services.knowledge_graph.incremental_builder.settings")
-    def test_no_api_key_returns_none(
-        self, mock_settings: MagicMock, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_no_api_key_returns_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("KG_GOOGLE_API_KEY", raising=False)
-        mock_settings.google_api_key = None
-        mock_settings.google_ai_studio_key = None
-
         b = KGIncrementalBuilder()
-        with patch.dict("sys.modules", {"google": MagicMock(), "google.genai": MagicMock()}):
-            result = b._get_gemini_client()
-        assert result is None
+        assert b._get_gemini_client() is None
 
-    @patch("backend.services.knowledge_graph.incremental_builder.settings")
-    def test_prefers_kg_google_api_key_env_over_shared_settings(
-        self, mock_settings: MagicMock, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """KG extraction must isolate its key from the WhatsApp bot's shared one."""
+    def test_legacy_google_keys_are_ignored(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Gemini KG extraction is retired: Google keys no longer spawn a client."""
         monkeypatch.setenv("KG_GOOGLE_API_KEY", "kg-dedicated-key")
-        mock_settings.google_api_key = "shared-bot-key"
-        mock_settings.google_ai_studio_key = None
-
-        mock_genai = MagicMock()
         b = KGIncrementalBuilder()
-        with patch.dict(
-            "sys.modules", {"google": MagicMock(genai=mock_genai), "google.genai": mock_genai}
-        ):
-            b._get_gemini_client()
+        assert b._get_gemini_client() is None
 
-        assert mock_genai.Client.call_args.kwargs["api_key"] == "kg-dedicated-key"
-
-    @patch("backend.services.knowledge_graph.incremental_builder.settings")
-    def test_falls_back_to_shared_settings_when_kg_key_unset(
-        self, mock_settings: MagicMock, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Additive: behavior is unchanged until KG_GOOGLE_API_KEY is set anywhere."""
-        monkeypatch.delenv("KG_GOOGLE_API_KEY", raising=False)
-        mock_settings.google_api_key = "shared-bot-key"
-        mock_settings.google_ai_studio_key = None
-
-        mock_genai = MagicMock()
+    def test_returns_injected_client_when_set(self) -> None:
         b = KGIncrementalBuilder()
-        with patch.dict(
-            "sys.modules", {"google": MagicMock(genai=mock_genai), "google.genai": mock_genai}
-        ):
-            b._get_gemini_client()
-
-        assert mock_genai.Client.call_args.kwargs["api_key"] == "shared-bot-key"
-
-    @patch("backend.services.knowledge_graph.incremental_builder.settings")
-    def test_import_error_returns_none(self, mock_settings: MagicMock) -> None:
-        mock_settings.google_api_key = "test-key-123456"
-
-        b = KGIncrementalBuilder()
-        # Force ImportError by ensuring google.genai is not importable
-        with patch("builtins.__import__", side_effect=ImportError("no google")):
-            result = b._get_gemini_client()
-        assert result is None
-
-    @patch("backend.services.knowledge_graph.incremental_builder.settings")
-    def test_caches_client(self, mock_settings: MagicMock) -> None:
-        mock_settings.google_api_key = "test-key-123456"
-
-        mock_genai = MagicMock()
-        mock_client_instance = MagicMock()
-        mock_genai.Client.return_value = mock_client_instance
-
-        b = KGIncrementalBuilder()
-        with patch.dict(
-            "sys.modules", {"google": MagicMock(genai=mock_genai), "google.genai": mock_genai}
-        ):
-            with patch(
-                "backend.services.knowledge_graph.incremental_builder.settings", mock_settings
-            ):
-                result1 = b._get_gemini_client()
-                result2 = b._get_gemini_client()
-
-        # Should return same instance (cached)
-        assert result1 is result2
+        injected = MagicMock()
+        b._gemini_client = injected
+        assert b._get_gemini_client() is injected
 
 
 # ---------------------------------------------------------------------------

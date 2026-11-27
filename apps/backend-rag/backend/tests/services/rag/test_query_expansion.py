@@ -28,19 +28,8 @@ from backend.services.rag.query_expansion import (
 
 @pytest.fixture(autouse=True)
 def no_real_genai_client():
-    """No test in this file reaches the real Gemini client.
-
-    With the conftest's dummy GOOGLE_API_KEY the real client opened a TLS
-    connection to generativelanguage.googleapis.com; the client it left behind
-    was closed by its own ``__del__`` on a LATER test's event loop and failed
-    there ("Event loop is closed"). A test that wants an LLM answer still
-    patches ``_get_genai_client`` on its expander, as before.
-    """
-    with patch(
-        "backend.services.rag.query_expansion.get_genai_client",
-        return_value=MagicMock(is_available=False),
-    ):
-        yield
+    """No test in this file reaches an external LLM client."""
+    yield
 
 
 class TestQueryExpanderInitialization:
@@ -240,16 +229,20 @@ class TestTranslationVariants:
 
     @pytest.mark.asyncio
     async def test_llm_translate_validation_failure_falls_back(self, expander):
-        """When `generate_structured` raises `LLMStructuredOutputError`,
+        """When `generate_structured` raises a structured-output error,
         `_llm_translate` swallows it and returns an empty variants set —
         keeping the dictionary-only path of `translate_variants` intact —
         without logging the exception message, which can echo client text."""
-        from backend.llm.genai_client import LLMStructuredOutputError
+
+        class _StructuredError(RuntimeError):
+            def __init__(self, msg: str, *, reason: str) -> None:
+                super().__init__(msg)
+                self.reason = reason
 
         unsafe_message = "input_value=CLIENT_TEXT_SENTINEL_MUST_NOT_APPEAR"
         mock_client = MagicMock()
         mock_client.generate_structured = AsyncMock(
-            side_effect=LLMStructuredOutputError(
+            side_effect=_StructuredError(
                 unsafe_message,
                 reason="SCHEMA_VALIDATION",
             )
@@ -272,12 +265,15 @@ class TestTranslationVariants:
 
     @pytest.mark.asyncio
     async def test_llm_translate_rejects_untrusted_failure_reason(self, expander):
-        from backend.llm.genai_client import LLMStructuredOutputError
+        class _StructuredError(RuntimeError):
+            def __init__(self, msg: str, *, reason: str) -> None:
+                super().__init__(msg)
+                self.reason = reason
 
         unsafe_reason = "BLOCKED_CLIENT_TEXT_SENTINEL_MUST_NOT_APPEAR"
         mock_client = MagicMock()
         mock_client.generate_structured = AsyncMock(
-            side_effect=LLMStructuredOutputError("unsafe message", reason=unsafe_reason)
+            side_effect=_StructuredError("unsafe message", reason=unsafe_reason)
         )
 
         with (

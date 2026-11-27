@@ -1,23 +1,26 @@
-"""LLMCreditSentinel — catch a depleted Gemini prepay balance in minutes, not days.
+"""LLMCreditSentinel — catch a depleted LLM credit balance in minutes, not days.
 
-Three times in one week the Gemini prepayment credits hit zero and every LLM
-call started returning ``429 RESOURCE_EXHAUSTED``. Because the agentic path is
+Three times in one week the LLM prepayment credits hit zero and every LLM
+call started failing with quota exhaustion. Because the agentic path is
 what *decides which collections to search*, a dead LLM means
 ``collections_queried = []`` → zero chunks → the RAG abstains on everything →
 the outbox worker treats the abstention as a failure and burns its five retries
 → the person on WhatsApp gets pure silence. On 2026-07-28 that ran for ~34
 hours before anyone noticed, with the whole team testing against a mute bot.
 
-This sentinel makes the smallest possible LLM call on a schedule and classifies
-the outcome. It alerts ONLY on a genuine depletion.
+This sentinel makes the smallest possible LLM call on a schedule (via the
+Claude Console ``hardening.credit_sentinel`` lane) and classifies the outcome.
+It alerts ONLY on a genuine credit/quota depletion.
 
 Why the classifier is narrow on purpose
 ---------------------------------------
-``429`` alone is NOT depletion — it is also the ordinary per-minute rate limit,
-which is transient and self-healing. Alerting on every 429 would train everyone
-to ignore the alarm, so :func:`classify_probe_error` requires the depletion
-wording as well. Anything it cannot positively identify is ``UNKNOWN``, which
-is logged and never alerted: an unreachable API at 3am is not a billing event.
+A transient per-minute rate limit is NOT depletion — it is self-healing.
+Alerting on every rate limit would train everyone to ignore the alarm, so
+:func:`classify_probe_error` distinguishes transient rate limits from
+positively-identified credit/quota depletion (both Claude Console structured
+``Last error class: ... quota`` tails and legacy billing depletion strings).
+Anything it cannot positively identify is ``UNKNOWN``, which is logged and
+never alerted: an unreachable API at 3am is not a billing event.
 (Same doctrine as ``token_watchdog``: we don't cry wolf.)
 """
 
@@ -31,15 +34,24 @@ from enum import Enum
 
 logger = logging.getLogger(__name__)
 
-# The depletion signature, as Google actually words it. Kept as alternatives
-# rather than one brittle sentence because the message has been reworded before.
+# Depletion and rate-limit signatures across Claude Console structured error
+# tails ("Last error class: console_N: <class>") and legacy provider messages.
+_CONSOLE_RATE_LIMIT_RE = re.compile(
+    r"last\s+error\s+class:.*?\b(?:rate[\s_]+limited|rate_limit)\b",
+    re.IGNORECASE,
+)
 _DEPLETION_RE = re.compile(
     r"prepayment\s+credits?\s+are\s+depleted"
     r"|billing\s+account.*(?:closed|disabled)"
-    r"|has\s+been\s+depleted",
+    r"|has\s+been\s+depleted"
+    r"|credit\s+balance\s+is\s+too\s+low"
+    r"|last\s+error\s+class:.*?\bquota\b",
     re.IGNORECASE,
 )
-_RESOURCE_EXHAUSTED_RE = re.compile(r"RESOURCE_EXHAUSTED|\b429\b")
+_RESOURCE_EXHAUSTED_RE = re.compile(
+    r"RESOURCE_EXHAUSTED|\b429\b|\brate[\s_]+limit(?:ed)?\b",
+    re.IGNORECASE,
+)
 
 
 class CreditState(str, Enum):
@@ -67,10 +79,12 @@ class CreditVerdict:
 def classify_probe_error(exc: BaseException) -> CreditVerdict:
     """Map a failed probe onto a verdict.
 
-    Depletion requires BOTH an exhaustion signal and the billing wording;
-    an exhaustion signal on its own is the ordinary rate limit.
+    Depletion requires a positively-identified billing/quota depletion signal;
+    a transient rate-limit signal on its own maps to RATE_LIMITED.
     """
     text = f"{type(exc).__name__}: {exc}"
+    if _CONSOLE_RATE_LIMIT_RE.search(text):
+        return CreditVerdict(CreditState.RATE_LIMITED, text[:400])
     if _DEPLETION_RE.search(text):
         return CreditVerdict(CreditState.DEPLETED, text[:400])
     if _RESOURCE_EXHAUSTED_RE.search(text):
@@ -112,9 +126,7 @@ class LLMCreditSentinel:
             )
             return verdict
 
-        logger.error(
-            "🚨 [LLMCreditSentinel] CREDITO ESAURITO — %s", verdict.detail[:300]
-        )
+        logger.error("🚨 [LLMCreditSentinel] CREDITO ESAURITO — %s", verdict.detail[:300])
         for channel, notify in self._notifiers.items():
             try:
                 ok = await notify(ALERT_TEXT)
@@ -124,17 +136,15 @@ class LLMCreditSentinel:
                     "consegnato" if ok else "NON consegnato",
                 )
             except Exception as exc:  # one dead channel must not mute the others
-                logger.warning(
-                    "🚨 [LLMCreditSentinel] alert su %s fallito: %s", channel, exc
-                )
+                logger.warning("🚨 [LLMCreditSentinel] alert su %s fallito: %s", channel, exc)
         return verdict
 
 
 ALERT_TEXT = (
-    "🚨 ZANTARA MATI — kredit Gemini habis.\n\n"
+    "🚨 ZANTARA MATI — kredit Claude Console habis.\n\n"
     "Semua jawaban bot berhenti: RAG tidak bisa mencari, jadi tidak ada "
     "jawaban sama sekali (bukan jawaban salah — tidak ada balasan).\n\n"
-    "Yang harus dilakukan: isi ulang prepayment di AI Studio, "
-    "project *Nuzantara* (930328104463) → https://ai.studio/projects\n\n"
+    "Yang harus dilakukan: cek kuota & kredit organisasi Anthropic Console "
+    "(atau AI Studio fallback) untuk project *Nuzantara*.\n\n"
     "Selama belum diisi, jangan minta tim tes bot: pertanyaan mereka hilang."
 )

@@ -4,7 +4,6 @@ Integrates with AutonomousScheduler for automatic incremental KG updates
 """
 
 import asyncio
-import hashlib
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -59,42 +58,7 @@ class KGIncrementalBuilder:
         self._gemini_client: Any | None = None
 
     def _get_gemini_client(self) -> Any | None:
-        """Get or create Gemini client using Google AI Studio"""
-        if self._gemini_client is None:
-            try:
-                from google import genai
-
-                # Prefer a KG-dedicated key (KG_GOOGLE_API_KEY) so this feeder can
-                # be moved to an isolated Gemini project/key without touching the
-                # WhatsApp bot's shared GOOGLE_API_KEY. Falls back to the shared
-                # settings chain until KG_GOOGLE_API_KEY is set anywhere (additive,
-                # no behavior change until then).
-                api_key = (
-                    os.environ.get("KG_GOOGLE_API_KEY")
-                    or settings.google_api_key
-                    or settings.google_ai_studio_key
-                )
-
-                if not api_key:
-                    logger.warning("⚠️ GOOGLE_API_KEY not set - KG extraction will be skipped")
-                    return None
-
-                # Initialize with Google AI Studio API key
-                self._gemini_client = genai.Client(api_key=api_key)
-                # Log a non-reversible fingerprint, never the key material, so we can
-                # still verify (e.g. against the WhatsApp bot's key) WHICH key is in
-                # use without leaking it in clear text (CodeQL #4019).
-                key_fp = hashlib.sha256(api_key.encode()).hexdigest()[:8] if api_key else "none"
-                logger.info(
-                    "✅ Gemini client initialized with Google AI Studio (key fp=%s)", key_fp
-                )
-            except ImportError:
-                logger.warning("⚠️ google-genai SDK not available")
-                return None
-            except Exception as e:
-                logger.error("❌ Failed to initialize Gemini client: %s", e)
-                return None
-
+        """Gemini KG extraction is retired (Wave 2 Stage 3). Returns injected client or None."""
         return self._gemini_client
 
     async def get_processed_chunk_ids(self) -> set[str]:

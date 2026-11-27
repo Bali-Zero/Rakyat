@@ -23,10 +23,9 @@ def _reset_singleton():
 @pytest.fixture
 def expander(_reset_singleton):
     """Create a QueryExpander with mocked cache."""
-    with patch("backend.services.rag.query_expansion.GENAI_AVAILABLE", False):
-        from backend.services.rag.query_expansion import QueryExpander
+    from backend.services.rag.query_expansion import QueryExpander
 
-        return QueryExpander(cache_service=_reset_singleton, max_variants=5)
+    return QueryExpander(cache_service=_reset_singleton, max_variants=5)
 
 
 # ---------------------------------------------------------------------------
@@ -317,8 +316,7 @@ class TestGenerateCacheKey:
 
 class TestGetGenaiClient:
     def test_returns_none_when_unavailable(self, expander):
-        with patch("backend.services.rag.query_expansion.GENAI_AVAILABLE", False):
-            client = expander._get_genai_client()
+        client = expander._get_genai_client()
         assert client is None
 
 
@@ -330,11 +328,10 @@ class TestGetGenaiClient:
 class TestGetQueryExpander:
     def test_singleton(self):
         with patch("backend.services.rag.query_expansion.get_cache_service"):
-            with patch("backend.services.rag.query_expansion.GENAI_AVAILABLE", False):
-                import backend.services.rag.query_expansion as mod
+            import backend.services.rag.query_expansion as mod
 
-                mod._query_expander_instance = None
-                e1 = mod.get_query_expander()
-                e2 = mod.get_query_expander()
-                assert e1 is e2
-                mod._query_expander_instance = None  # cleanup
+            mod._query_expander_instance = None
+            e1 = mod.get_query_expander()
+            e2 = mod.get_query_expander()
+            assert e1 is e2
+            mod._query_expander_instance = None  # cleanup

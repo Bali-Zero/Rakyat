@@ -356,14 +356,14 @@ class CommunityDetector:
         self,
         llm_gateway: Any,
         db_pool: Any | None = None,
-        llm_model: str = "gemini-2.0-flash",
+        llm_model: str = "claude-sonnet-5-5",
     ) -> int:
         """Generate natural language summaries for communities using LLM.
 
         Args:
             llm_gateway: LLMGateway with generate() method
             db_pool: Optional separate pool (uses self._pool if None)
-            llm_model: Model to use for summary generation (default: gemini-2.0-flash)
+            llm_model: Model to use for summary generation (default: claude-sonnet-5-5)
 
         Returns:
             Number of summaries generated

@@ -1,17 +1,18 @@
 """
-Query Expander Service - Multi-Query LLM Expansion
+Query Expander Service - Multi-Query Expansion
 
-Generates 2-3 alternative search queries using Gemini Flash to improve
-recall on complex/comparative queries. Uses RRF fusion downstream.
+Generates alternative search queries via KeywordTranslator (default) or an
+injected LLM client to improve recall on complex/comparative queries.
+Uses RRF fusion downstream.
 
 Two expansion modes:
 1. expand() — single expanded query (original + translations), backward compatible
 2. expand_multi() — list of 2-3 alternative queries for RRF fusion (NEW)
 
 Architecture:
-- Gemini Flash (fast, cheap ~$0.0001/call) with 3s timeout
-- Redis cache (1h TTL) to avoid repeat LLM calls
-- Graceful fallback to KeywordTranslator if Gemini unavailable
+- Redis cache (1h TTL) to avoid repeat expansion calls
+- Deterministic KeywordTranslator fallback by default (Gemini default retired)
+- Optional injected client seam for test verification
 - Feature flag: ENABLE_QUERY_EXPANSION
 
 Author: RIRI (original), refactored 2026-03-24
@@ -66,20 +67,13 @@ class QueryExpander:
     def __init__(self) -> None:
         self._gemini: Any = None
 
-    async def _get_gemini(self) -> Any:
-        """Lazy init Gemini client."""
-        if self._gemini is None:
-            from backend.services.llm_clients.gemini_service import GeminiService
-
-            self._gemini = GeminiService()
-        return self._gemini
-
     async def _call_gemini(self, prompt: str, timeout_s: float = 3.0) -> str | None:
-        """Call Gemini with timeout. Returns None on any failure."""
+        """Call injected LLM client with timeout if set (Gemini default retired in Wave 2 Stage 3)."""
+        if self._gemini is None:
+            return None
         try:
-            client = await self._get_gemini()
             result = await asyncio.wait_for(
-                client.generate_response(prompt=prompt),
+                self._gemini.generate_response(prompt=prompt),
                 timeout=timeout_s,
             )
             return result if result and result.strip() else None

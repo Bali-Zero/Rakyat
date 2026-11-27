@@ -22,11 +22,6 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from backend.core.cache import CacheService, get_cache_service
-from backend.llm.genai_client import (
-    GENAI_AVAILABLE,
-    LLMStructuredOutputError,
-    get_genai_client,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -202,20 +197,7 @@ Example output: ["variant 1", "variant 2"]"""
         logger.info("✅ QueryExpander initialized (max_variants=%s)", max_variants)
 
     def _get_genai_client(self) -> Any | None:
-        """Lazy load GenAI client."""
-        if self._genai_client is None and GENAI_AVAILABLE:
-            try:
-                client = get_genai_client()
-                if client.is_available:
-                    self._genai_client = client
-            except (ImportError, AttributeError, RuntimeError) as e:
-                logger.warning("Failed to initialize GenAI client (import/runtime): %s", e)
-            except Exception as e:
-                logger.warning(
-                    "Failed to initialize GenAI client (unexpected): %s",
-                    e,
-                    exc_info=True,
-                )
+        """Return injected LLM client if set (Gemini query expansion retired in Wave 2 Stage 3)."""
         return self._genai_client
 
     def _generate_cache_key(self, query: str, method: str) -> str:
@@ -475,17 +457,19 @@ Example output: ["variant 1", "variant 2"]"""
 
         except asyncio.TimeoutError:
             logger.debug("LLM translation timeout, using dictionary only")
-        except LLMStructuredOutputError as exc:
-            # The exception message embeds Pydantic's input_value and can echo
-            # client text. Log only the closed-vocabulary out-of-band reason.
-            logger.debug(
-                "LLM translation failed schema validation (reason=%s)",
-                getattr(exc, "reason", "") or "UNATTRIBUTED",
-            )
         except Exception as exc:
-            # SDK and validation exceptions can embed request/model text.
-            # Preserve the fail-open dictionary fallback but log type only.
-            logger.debug("LLM translation failed (unexpected=%s)", type(exc).__name__)
+            raw_reason = getattr(exc, "reason", None)
+            if isinstance(raw_reason, str):
+                safe_reason = (
+                    raw_reason
+                    if raw_reason in {"EMPTY_RESPONSE", "JSON_PARSE", "SCHEMA_VALIDATION"}
+                    else "UNATTRIBUTED"
+                )
+                logger.debug("LLM translation failed schema validation (reason=%s)", safe_reason)
+            else:
+                # SDK and validation exceptions can embed request/model text.
+                # Preserve the fail-open dictionary fallback but log type only.
+                logger.debug("LLM translation failed (unexpected=%s)", type(exc).__name__)
 
         return variants
 

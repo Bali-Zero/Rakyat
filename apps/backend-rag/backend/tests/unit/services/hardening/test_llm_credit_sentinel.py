@@ -59,6 +59,42 @@ def test_depletion_is_detected_even_without_the_429_token():
     assert v.state is CreditState.DEPLETED
 
 
+def test_claude_console_quota_error_is_classified_as_depleted():
+    from backend.llm.claude_oauth_client import ClaudeOAuthError
+
+    err = ClaudeOAuthError(
+        "Claude Console seats failed after 2 attempt(s). Last error class: console_2: quota"
+    )
+    v = classify_probe_error(err)
+    assert (v.state, v.should_alert) == (CreditState.DEPLETED, True)
+
+
+def test_claude_console_rate_limited_error_is_not_depletion():
+    from backend.llm.claude_oauth_client import ClaudeOAuthError
+
+    err = ClaudeOAuthError(
+        "Claude Console seats failed after 2 attempt(s). Last error class: console_2: rate limited"
+    )
+    v = classify_probe_error(err)
+    assert (v.state, v.should_alert) == (CreditState.RATE_LIMITED, False)
+
+
+def test_claude_console_non_billing_errors_are_unknown():
+    from backend.llm.claude_oauth_client import ClaudeOAuthError, ClaudeOAuthNotAvailable
+
+    for err in (
+        ClaudeOAuthError(
+            "Claude Console seats failed after 1 attempt(s). Last error class: console_1: empty_output"
+        ),
+        ClaudeOAuthError(
+            "Claude Console seats failed after 1 attempt(s). Last error class: console_1: cli_timeout"
+        ),
+        ClaudeOAuthNotAvailable("no Claude Console key is configured"),
+    ):
+        v = classify_probe_error(err)
+        assert (v.state, v.should_alert) == (CreditState.UNKNOWN, False)
+
+
 # ----------------------------------------------------------------- sentinel
 
 
@@ -117,3 +153,26 @@ async def test_one_dead_channel_does_not_mute_the_others():
     verdict = await sentinel.check()
     assert verdict.state is CreditState.DEPLETED
     assert len(delivered) == 1
+
+
+@pytest.mark.asyncio
+async def test_cli_probe_uses_the_claude_console_lane(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CLI probe uses the registered hardening.credit_sentinel Console lane."""
+    from unittest.mock import AsyncMock
+
+    from backend.llm.claude_oauth_client import ClaudeOAuthResponse
+    from backend.services.hardening import llm_credit_sentinel_cli
+
+    fake_complete = AsyncMock(
+        return_value=ClaudeOAuthResponse(
+            text="PONG", token_label="console_1", elapsed_s=0.1, attempts=1
+        )
+    )
+    monkeypatch.setattr("backend.llm.claude_oauth_client.complete_async", fake_complete)
+
+    reply = await llm_credit_sentinel_cli._probe()
+
+    assert reply == "PONG"
+    fake_complete.assert_awaited_once()
+    assert fake_complete.await_args.kwargs["endpoint"] == "hardening.credit_sentinel"
+    assert fake_complete.await_args.kwargs["max_output_tokens"] == 16
