@@ -15,8 +15,8 @@ import asyncpg
 import pytest
 import pytest_asyncio
 
+from backend.app.services.hr import hr_service
 from backend.app.services.hr.hr_service import (
-    HR_LEAVE_LOCK_NS,
     HRService,
     _lock_leave_balances,
     _lock_leave_balances_a_year_opens_from,
@@ -411,6 +411,8 @@ async def test_forward_again_after_a_rollback_drops_both_checks(pool: asyncpg.Po
 
 @pytest.mark.asyncio
 async def test_the_leave_lock_is_a_two_key_lock_in_its_own_namespace(pool: asyncpg.Pool) -> None:
+    namespace = getattr(hr_service, "HR_LEAVE_LOCK_NS", None)
+    assert namespace is not None, "no leave lock namespace"
     employee_id = await _employee(pool, "Synthetic Lock Shape")
     annual_id = await _leave_type(pool, "annual", 12)
     await _balance(pool, employee_id, annual_id, 2026, 12, 0)
@@ -425,7 +427,7 @@ async def test_the_leave_lock_is_a_two_key_lock_in_its_own_namespace(pool: async
                 await holder.fetchval("SELECT pg_backend_pid()"),
             )
 
-    assert [tuple(row) for row in held] == [(HR_LEAVE_LOCK_NS, employee_id, 2)]
+    assert [tuple(row) for row in held] == [(namespace, employee_id, 2)]
 
 
 class _HeldConnection:

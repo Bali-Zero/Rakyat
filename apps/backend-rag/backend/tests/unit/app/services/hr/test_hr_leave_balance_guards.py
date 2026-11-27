@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from backend.app.services.hr.hr_service import HR_LEAVE_LOCK_NS
+from backend.app.services.hr import hr_service
 
 APPS = Path(__file__).resolve().parents[7]
 HR_SERVICE = APPS / "backend-rag" / "backend" / "app" / "services" / "hr" / "hr_service.py"
@@ -46,7 +46,9 @@ def test_only_the_hr_service_writes_leave_balances() -> None:
 
 
 def test_no_other_code_uses_the_leave_lock_namespace() -> None:
-    number = re.compile(rf"\b{HR_LEAVE_LOCK_NS}\b")
+    namespace = getattr(hr_service, "HR_LEAVE_LOCK_NS", None)
+    assert namespace is not None, "no leave lock namespace"
+    number = re.compile(rf"\b{namespace}\b")
     users = [
         str(path.relative_to(APPS))
         for path in _source_files()
