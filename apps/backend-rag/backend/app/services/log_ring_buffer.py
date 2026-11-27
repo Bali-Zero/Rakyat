@@ -71,7 +71,9 @@ class RingBufferLogHandler(logging.Handler):
         # goes sideways.
         if hasattr(record, "correlation_id"):
             entry["correlation_id"] = record.correlation_id
-        if record.exc_info and record.exc_info[1] is not None:
+        if hasattr(record, "_api_exception") and record._api_exception["type"] is not None:
+            entry["exception"] = record._api_exception
+        elif record.exc_info and record.exc_info[1] is not None:
             entry["exception"] = {
                 "type": record.exc_info[0].__name__ if record.exc_info[0] else None,
                 "message": str(record.exc_info[1]),
