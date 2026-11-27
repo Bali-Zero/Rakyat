@@ -117,17 +117,21 @@ async def save_episode(request: SaveEpisodeRequest) -> SaveEpisodeResponse:
         }
 
         db = await _get_qdrant()
-        await db.upsert_documents(
+        result = await db.upsert_documents(
             chunks=[request.content],
             embeddings=[embedding],
             metadatas=[payload],
             ids=[episode_id],
         )
+        if isinstance(result, dict) and result.get("success") is False:
+            raise HTTPException(status_code=502, detail="episode store rejected the write")
 
         logger.info(f"LAM episode saved: {episode_id} (agent={request.agent})")
         await invalidate_cache("zantara:lam_memory:*")
         return SaveEpisodeResponse(id=episode_id, status="saved")
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("LAM save_episode failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e
@@ -250,10 +254,14 @@ async def delete_episode(episode_id: str) -> dict[str, str]:
     """Delete a specific episode by ID."""
     try:
         db = await _get_qdrant()
-        await db.delete([episode_id])
+        result = await db.delete([episode_id])
+        if isinstance(result, dict) and result.get("success") is False:
+            raise HTTPException(status_code=502, detail="episode store rejected the delete")
         logger.info("LAM episode deleted: %s", episode_id)
         await invalidate_cache("zantara:lam_memory:*")
         return {"status": "deleted", "id": episode_id}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("LAM delete_episode failed: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e
