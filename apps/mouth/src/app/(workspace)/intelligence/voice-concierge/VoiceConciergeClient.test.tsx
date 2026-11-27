@@ -1,6 +1,13 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { VOICE_CONCIERGE_MAX_MESSAGE_LENGTH } from "@/lib/voice-concierge-limits";
 import { VoiceConciergeClient } from "./VoiceConciergeClient";
 
 const originalMediaRecorder = globalThis.MediaRecorder;
@@ -1091,5 +1098,284 @@ describe("VoiceConciergeClient", () => {
       "/api/lab/voice-concierge",
       expect.objectContaining({ method: "POST" }),
     );
+  });
+
+  describe("a turn that fails never poisons the conversation", () => {
+    type Outcome = () => Response | Promise<Response>;
+
+    const CONTROL_QUESTION = "Can I open a cafe in Bali?";
+    const CONTROL_ANSWER = "Start with the KBLI and zoning check.";
+    const FAILED_QUESTION = "What about the second location?";
+    const FALLBACK_ERROR = "The concierge could not answer. Try again.";
+
+    function wellFormed(answer: string): Response {
+      return new Response(
+        JSON.stringify({
+          answer,
+          intent: "company",
+          risk_level: "medium",
+          next_action: "collect_non_pii_context",
+          quick_replies: ["Ask about KBLI"],
+          safety_note: "No PII.",
+          mode: "demo",
+          provider: "local-demo",
+        }),
+        { status: 200 },
+      );
+    }
+
+    function jsonResponse(body: unknown, status: number): Response {
+      return new Response(JSON.stringify(body), { status });
+    }
+
+    // Answers the concierge route from a queue and records every request body;
+    // everything else (the status probe) keeps the default mock.
+    function mockConcierge(queue: Outcome[]): {
+      bodies: Array<{
+        message: string;
+        history: Array<{ role: string; content: string }>;
+      }>;
+    } {
+      const base = vi.mocked(global.fetch).getMockImplementation();
+      const bodies: Array<{
+        message: string;
+        history: Array<{ role: string; content: string }>;
+      }> = [];
+      vi.mocked(global.fetch).mockImplementation(async (input, init) => {
+        if (String(input) !== "/api/lab/voice-concierge") {
+          return base ? base(input, init) : new Response("{}", { status: 500 });
+        }
+        bodies.push(JSON.parse(String(init?.body)));
+        const next = queue.shift();
+        if (!next) throw new Error("unexpected extra concierge request");
+        return next();
+      });
+      return { bodies };
+    }
+
+    function promptBox(): HTMLTextAreaElement {
+      return screen.getByLabelText("Concierge prompt") as HTMLTextAreaElement;
+    }
+
+    function listHas(text: string): boolean {
+      return screen.queryByText(text, { selector: "div" }) !== null;
+    }
+
+    async function send(text: string): Promise<void> {
+      fireEvent.change(promptBox(), { target: { value: text } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    }
+
+    async function sendControlTurn(): Promise<void> {
+      await send(CONTROL_QUESTION);
+      await waitFor(() => expect(listHas(CONTROL_ANSWER)).toBe(true));
+    }
+
+    const failures: Array<[string, Outcome, string]> = [
+      [
+        "a 400 message too long",
+        () => jsonResponse({ error: "message too long" }, 400),
+        "message too long",
+      ],
+      [
+        "a 400 pii_not_allowed with a safety note",
+        () =>
+          jsonResponse(
+            { error: "pii_not_allowed", safety_note: "Remove identifiers." },
+            400,
+          ),
+        "Remove identifiers.",
+      ],
+      [
+        "a body that cannot be parsed",
+        () =>
+          ({
+            ok: true,
+            status: 200,
+            json: () => Promise.reject(new SyntaxError("Unexpected token")),
+          }) as unknown as Response,
+        FALLBACK_ERROR,
+      ],
+      [
+        "a truncated JSON body",
+        () => new Response('{"answer": "Start with', { status: 200 }),
+        FALLBACK_ERROR,
+      ],
+      [
+        "an abort",
+        () => {
+          throw new DOMException("The operation was aborted.", "AbortError");
+        },
+        FALLBACK_ERROR,
+      ],
+      [
+        "a thrown fetch",
+        () => {
+          throw new TypeError("Failed to fetch");
+        },
+        FALLBACK_ERROR,
+      ],
+      [
+        "a 200 whose answer is a number",
+        () => jsonResponse({ answer: 7 }, 200),
+        FALLBACK_ERROR,
+      ],
+      [
+        "a 200 with no answer",
+        () => jsonResponse({ intent: "company" }, 200),
+        FALLBACK_ERROR,
+      ],
+      [
+        "a 200 whose answer is blank",
+        () => jsonResponse({ answer: "  " }, 200),
+        FALLBACK_ERROR,
+      ],
+      [
+        "a 200 whose body is an array",
+        () => jsonResponse([{ answer: "x" }], 200),
+        FALLBACK_ERROR,
+      ],
+      [
+        "a 200 whose quick_replies is a string",
+        () => jsonResponse({ answer: "Fine.", quick_replies: "x" }, 200),
+        FALLBACK_ERROR,
+      ],
+      [
+        "a 200 whose model is a number",
+        () => jsonResponse({ answer: "Fine.", model: 3 }, 200),
+        FALLBACK_ERROR,
+      ],
+    ];
+
+    it.each(failures)(
+      "rolls back %s after a valid turn and keeps it out of the next history",
+      async (_label, failing, expectedError) => {
+        const { bodies } = mockConcierge([
+          () => wellFormed(CONTROL_ANSWER),
+          failing,
+          () => wellFormed("Zoning differs per site."),
+        ]);
+        render(<VoiceConciergeClient />);
+
+        await sendControlTurn();
+        expect(listHas(CONTROL_QUESTION)).toBe(true);
+
+        await send(FAILED_QUESTION);
+        await waitFor(() =>
+          expect(screen.getByText(expectedError)).toBeTruthy(),
+        );
+
+        // The prior turns survive, the failed one is not in the list, the
+        // visitor gets the text back.
+        expect(listHas(CONTROL_QUESTION)).toBe(true);
+        expect(listHas(CONTROL_ANSWER)).toBe(true);
+        expect(listHas(FAILED_QUESTION)).toBe(false);
+        expect(promptBox().value).toBe(FAILED_QUESTION);
+
+        // Sending again carries only the turns that succeeded.
+        fireEvent.click(screen.getByRole("button", { name: "Send" }));
+        await waitFor(() =>
+          expect(listHas("Zoning differs per site.")).toBe(true),
+        );
+        expect(bodies).toHaveLength(3);
+        expect(bodies[2].message).toBe(FAILED_QUESTION);
+        expect(bodies[2].history).toEqual([
+          { role: "user", content: CONTROL_QUESTION },
+          { role: "assistant", content: CONTROL_ANSWER },
+        ]);
+      },
+    );
+
+    it("rolls back a failed first turn to an empty conversation", async () => {
+      const { bodies } = mockConcierge([
+        () => jsonResponse({ error: "message too long" }, 400),
+        () => wellFormed(CONTROL_ANSWER),
+      ]);
+      render(<VoiceConciergeClient />);
+
+      await send(FAILED_QUESTION);
+      await waitFor(() =>
+        expect(screen.getByText("message too long")).toBeTruthy(),
+      );
+      expect(listHas(FAILED_QUESTION)).toBe(false);
+      expect(promptBox().value).toBe(FAILED_QUESTION);
+
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() => expect(listHas(CONTROL_ANSWER)).toBe(true));
+      expect(bodies[1].history).toEqual([]);
+    });
+
+    it("appends both turns on a well-formed answer and replays them (valid control)", async () => {
+      const { bodies } = mockConcierge([
+        () => wellFormed(CONTROL_ANSWER),
+        () => wellFormed("Zoning differs per site."),
+      ]);
+      render(<VoiceConciergeClient />);
+
+      await sendControlTurn();
+      expect(listHas(CONTROL_QUESTION)).toBe(true);
+      expect(promptBox().value).toBe("");
+      expect(screen.getByText("Ask about KBLI")).toBeTruthy();
+
+      await send(FAILED_QUESTION);
+      await waitFor(() =>
+        expect(listHas("Zoning differs per site.")).toBe(true),
+      );
+      expect(bodies[1].history).toEqual([
+        { role: "user", content: CONTROL_QUESTION },
+        { role: "assistant", content: CONTROL_ANSWER },
+      ]);
+    });
+
+    it("limits the prompt box to the shared message length", () => {
+      render(<VoiceConciergeClient />);
+
+      expect(promptBox().maxLength).toBe(VOICE_CONCIERGE_MAX_MESSAGE_LENGTH);
+      expect(promptBox().maxLength).toBe(1200);
+    });
+
+    it("sends a transcript of exactly 1200 characters", async () => {
+      const { bodies } = mockConcierge([() => wellFormed(CONTROL_ANSWER)]);
+      render(<VoiceConciergeClient />);
+
+      await send("a".repeat(1200));
+
+      await waitFor(() => expect(listHas(CONTROL_ANSWER)).toBe(true));
+      expect(bodies).toHaveLength(1);
+      expect(bodies[0].message).toHaveLength(1200);
+    });
+
+    it("refuses a transcript of 1201 characters without a request", async () => {
+      const { bodies } = mockConcierge([]);
+      render(<VoiceConciergeClient />);
+
+      await send("a".repeat(1201));
+
+      await waitFor(() =>
+        expect(
+          screen.getByText("Message too long: at most 1,200 characters."),
+        ).toBeTruthy(),
+      );
+      expect(bodies).toHaveLength(0);
+      expect(promptBox().value).toBe("a".repeat(1201));
+      expect(screen.getByText(/Ask about visa, PT PMA/)).toBeTruthy();
+    });
+
+    it("keeps the earlier turns when a 1201-character transcript is refused", async () => {
+      const { bodies } = mockConcierge([() => wellFormed(CONTROL_ANSWER)]);
+      render(<VoiceConciergeClient />);
+
+      await sendControlTurn();
+      await send("a".repeat(1201));
+
+      await waitFor(() =>
+        expect(
+          screen.getByText("Message too long: at most 1,200 characters."),
+        ).toBeTruthy(),
+      );
+      expect(bodies).toHaveLength(1);
+      expect(listHas(CONTROL_QUESTION)).toBe(true);
+      expect(listHas(CONTROL_ANSWER)).toBe(true);
+    });
   });
 });

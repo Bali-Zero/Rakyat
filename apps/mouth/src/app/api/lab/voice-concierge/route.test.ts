@@ -1,5 +1,36 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { VOICE_CONCIERGE_MAX_MESSAGE_LENGTH } from "@/lib/voice-concierge-limits";
 import { POST } from "./route";
+
+function geminiAnswer(answer: string): Response {
+  return new Response(
+    JSON.stringify({
+      candidates: [
+        {
+          content: {
+            parts: [
+              {
+                text: JSON.stringify({
+                  answer,
+                  intent: "company",
+                  risk_level: "medium",
+                  next_action: "collect_non_pii_context",
+                  quick_replies: ["Check KBLI"],
+                }),
+              },
+            ],
+          },
+        },
+      ],
+    }),
+    { status: 200 },
+  );
+}
+
+function enableCloudText(): void {
+  process.env.GOOGLE_AI_STUDIO_API_KEY = "test-key";
+  process.env.VOICE_CONCIERGE_ALLOW_CLOUD_TEXT = "true";
+}
 
 function request(body: unknown): Request {
   return new Request("http://localhost/api/lab/voice-concierge", {
@@ -98,6 +129,223 @@ describe("voice concierge route", () => {
     await expect(response.json()).resolves.toMatchObject({
       error: "message required",
     });
+  });
+
+  it.each([null, 7, "text", [1, 2]])(
+    "answers a JSON body that is not an object like a missing message (%j)",
+    async (body) => {
+      const response = await POST(request(body));
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error: "message required",
+      });
+    },
+  );
+
+  it.each([7, true, ["a"], { a: 1 }, null])(
+    "refuses a message that is not a string with a 400 (%j)",
+    async (message) => {
+      const response = await POST(request({ message }));
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error: "message required",
+      });
+    },
+  );
+
+  it("accepts a message of exactly the shared limit and refuses one more", async () => {
+    const ok = await POST(
+      request({ message: "a".repeat(VOICE_CONCIERGE_MAX_MESSAGE_LENGTH) }),
+    );
+    expect(ok.status).toBe(200);
+
+    const tooLong = await POST(
+      request({ message: "a".repeat(VOICE_CONCIERGE_MAX_MESSAGE_LENGTH + 1) }),
+    );
+    expect(tooLong.status).toBe(400);
+    await expect(tooLong.json()).resolves.toMatchObject({
+      error: "message too long",
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("keeps the shared message limit at 1200 characters", () => {
+    expect(VOICE_CONCIERGE_MAX_MESSAGE_LENGTH).toBe(1200);
+  });
+
+  it.each(["de", 7, null, ["en"]])(
+    "refuses an unsupported locale (%j)",
+    async (locale) => {
+      const response = await POST(request({ message: "visa?", locale }));
+
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toMatchObject({
+        error: "invalid locale",
+      });
+    },
+  );
+
+  it.each([
+    ["not an array", "hi"],
+    ["null", null],
+    ["a non-object item", ["hi"]],
+    ["an item without content", [{ role: "user" }]],
+    ["an item with numeric content", [{ role: "user", content: 5 }]],
+    ["an unknown role", [{ role: "system", content: "x" }]],
+    [
+      "more than four items",
+      Array.from({ length: 5 }, () => ({ role: "user", content: "x" })),
+    ],
+  ])("refuses a history with %s", async (_label, history) => {
+    enableCloudText();
+    const response = await POST(request({ message: "visa?", history }));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "invalid history",
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a user turn of 1201 characters", "user", 1201],
+    ["a user turn of 5000 characters", "user", 5000],
+    ["an assistant turn of 4001 characters", "assistant", 4001],
+  ] as const)("accepts a history with %s", async (_label, role, length) => {
+    enableCloudText();
+    vi.mocked(global.fetch).mockImplementation(async () =>
+      geminiAnswer("Start with KBLI."),
+    );
+
+    const response = await POST(
+      request({
+        message: "visa?",
+        history: [{ role, content: "a".repeat(length) }],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("replays a 4001-character answer of the provider as an assistant turn", async () => {
+    enableCloudText();
+    const longAnswer = "a".repeat(4001);
+    vi.mocked(global.fetch).mockImplementation(async () =>
+      geminiAnswer(longAnswer),
+    );
+
+    const first = await POST(request({ message: "Can I open a cafe?" }));
+    expect(first.status).toBe(200);
+    const body = (await first.json()) as { answer: string };
+    expect(body.answer).toBe(longAnswer);
+
+    vi.mocked(global.fetch).mockImplementation(async () =>
+      geminiAnswer("Next: zoning."),
+    );
+    const replay = await POST(
+      request({
+        message: "And zoning?",
+        history: [
+          { role: "user", content: "Can I open a cafe?" },
+          { role: "assistant", content: body.answer },
+        ],
+      }),
+    );
+    expect(replay.status).toBe(200);
+  });
+
+  it("replays an answer with a synthetic passport-shaped value after character 1300", async () => {
+    enableCloudText();
+    const answer = `${"a".repeat(1400)} A9900001`;
+    vi.mocked(global.fetch).mockImplementation(async () =>
+      geminiAnswer(answer),
+    );
+
+    const first = await POST(request({ message: "Can I open a cafe?" }));
+    expect(first.status).toBe(200);
+    const body = (await first.json()) as { answer: string };
+
+    const replay = await POST(
+      request({
+        message: "And zoning?",
+        history: [
+          { role: "user", content: "Can I open a cafe?" },
+          { role: "assistant", content: body.answer },
+        ],
+      }),
+    );
+    expect(replay.status).toBe(200);
+  });
+
+  it("does not screen assistant history turns, even one that starts with a passport-shaped value", async () => {
+    enableCloudText();
+    vi.mocked(global.fetch).mockImplementation(async () =>
+      geminiAnswer("Next: zoning."),
+    );
+
+    const response = await POST(
+      request({
+        message: "And zoning?",
+        history: [
+          { role: "user", content: "Can I open a cafe?" },
+          { role: "assistant", content: "Ref A9900001 is a sample format." },
+        ],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("screens a user history turn whole, past character 1300", async () => {
+    enableCloudText();
+
+    const response = await POST(
+      request({
+        message: "And zoning?",
+        history: [{ role: "user", content: `${"a".repeat(1400)} A9900001` }],
+      }),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "pii_not_allowed",
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("still serves a clean user history turn of 1300+ characters (control)", async () => {
+    enableCloudText();
+    vi.mocked(global.fetch).mockImplementation(async () =>
+      geminiAnswer("Next: zoning."),
+    );
+
+    const response = await POST(
+      request({
+        message: "And zoning?",
+        history: [{ role: "user", content: "a".repeat(1400) }],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+  });
+
+  it("accepts what the client sends: locale, four turns, a long assistant answer", async () => {
+    const response = await POST(
+      request({
+        message: "Vorrei aprire una societa a Bali",
+        locale: "it",
+        history: [
+          { role: "user", content: "ciao" },
+          { role: "assistant", content: "a".repeat(2500) },
+          { role: "user", content: "e le tasse?" },
+          { role: "assistant", content: "Ok." },
+        ],
+      }),
+    );
+
+    expect(response.status).toBe(200);
   });
 
   it("requires internal auth in production before demo or Gemini text handling", async () => {

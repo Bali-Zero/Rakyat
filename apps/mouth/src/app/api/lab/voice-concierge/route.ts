@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { VOICE_CONCIERGE_MAX_MESSAGE_LENGTH } from "@/lib/voice-concierge-limits";
 import { canAccessVoiceConcierge } from "./auth";
 
 export const runtime = "nodejs";
@@ -55,7 +56,7 @@ interface GeminiResponse {
 }
 
 const DEFAULT_MODEL = "gemini-2.5-flash";
-const MAX_MESSAGE_LENGTH = 1200;
+const MAX_MESSAGE_LENGTH = VOICE_CONCIERGE_MAX_MESSAGE_LENGTH;
 const MAX_HISTORY_ITEMS = 4;
 const MAX_SPOKEN_ANSWER_LENGTH = 96;
 const TEXT_PROVIDER_TIMEOUT_MS = 15_000;
@@ -161,14 +162,46 @@ function isSafeHistoryTurn(turn: unknown): turn is SafeHistoryTurn {
   );
 }
 
+type BodyValidation =
+  | { ok: true; message: string }
+  | { ok: false; error: string };
+
+function validateBody(parsed: unknown): BodyValidation {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { ok: false, error: "message required" };
+  }
+  const body = parsed as Record<string, unknown>;
+  if (typeof body.message !== "string") {
+    return { ok: false, error: "message required" };
+  }
+  const message = body.message.trim();
+  if (message.length > MAX_MESSAGE_LENGTH) {
+    return { ok: false, error: "message too long" };
+  }
+  if (
+    body.locale !== undefined &&
+    !SUPPORTED_LOCALES.has(body.locale as SupportedLocale)
+  ) {
+    return { ok: false, error: "invalid locale" };
+  }
+  if (body.history !== undefined) {
+    if (!Array.isArray(body.history) || body.history.length > MAX_HISTORY_ITEMS) {
+      return { ok: false, error: "invalid history" };
+    }
+    for (const turn of body.history) {
+      // Shape only: history is never forwarded upstream, so its length is
+      // never a reason to refuse a turn.
+      if (!isSafeHistoryTurn(turn)) return { ok: false, error: "invalid history" };
+    }
+  }
+  return { ok: true, message };
+}
+
 function getSafeHistory(body: VoiceConciergeRequest): SafeHistoryTurn[] {
   return (Array.isArray(body.history) ? body.history : [])
     .filter(isSafeHistoryTurn)
     .slice(-MAX_HISTORY_ITEMS)
-    .map((turn) => ({
-      role: turn.role,
-      content: turn.content.slice(0, MAX_MESSAGE_LENGTH),
-    }));
+    .map((turn) => ({ role: turn.role, content: turn.content }));
 }
 
 function containsRequestPii(
@@ -176,7 +209,11 @@ function containsRequestPii(
   message: string,
 ): boolean {
   if (containsObviousPii(message)) return true;
-  return getSafeHistory(body).some((turn) => containsObviousPii(turn.content));
+  // Only the visitor's own turns are screened, each whole. Assistant turns are
+  // this route's answers and never go upstream.
+  return getSafeHistory(body).some(
+    (turn) => turn.role === "user" && containsObviousPii(turn.content),
+  );
 }
 
 function inferLocaleFromText(message: string): SupportedLocale {
@@ -449,10 +486,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  const body = (await request
-    .json()
-    .catch(() => ({}))) as VoiceConciergeRequest;
-  const message = body.message?.trim().slice(0, MAX_MESSAGE_LENGTH);
+  const parsed: unknown = await request.json().catch(() => null);
+  const validation = validateBody(parsed);
+  if (!validation.ok) {
+    return NextResponse.json({ error: validation.error }, { status: 400 });
+  }
+  const body = parsed as VoiceConciergeRequest;
+  const message = validation.message;
 
   if (!message) {
     return NextResponse.json({ error: "message required" }, { status: 400 });
