@@ -31,14 +31,6 @@ class OracleConfiguration:
             # raise ValueError(f"Missing required environment variables: {missing_vars}")
 
     @property
-    def google_api_key(self) -> str:
-        """Get Google API key"""
-        if not settings.google_api_key:
-            logger.warning("⚠️ GOOGLE_API_KEY not set - Oracle Google services will be disabled")
-            return ""  # Return empty string instead of raising error
-        return settings.google_api_key
-
-    @property
     def google_credentials_json(self) -> str:
         """Get Google credentials JSON"""
         return settings.google_credentials_json or "{}"

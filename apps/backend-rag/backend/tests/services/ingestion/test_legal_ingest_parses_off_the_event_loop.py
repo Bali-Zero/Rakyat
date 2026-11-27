@@ -4,11 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sys
 import threading
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
-from types import ModuleType
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -105,60 +103,6 @@ async def test_the_event_loop_runs_while_the_document_is_parsed():
 
     assert result["success"] is True
     assert seen["loop_ran_during_the_parse"] is True
-
-
-@pytest.mark.asyncio
-async def test_a_model_call_that_does_not_answer_is_abandoned_for_the_fallback(monkeypatch):
-    # No clock here either: the model call stays blocked until the test releases
-    # it, so the ingestion can only come back first if it stopped waiting.
-    service = _build_service()
-    service.metadata_extractor.extract.return_value = {}
-    release = threading.Event()
-    call_returned = threading.Event()
-
-    class BlockingModels:
-        def generate_content(self, **_kwargs):
-            release.wait(timeout=3)
-            call_returned.set()
-            return MagicMock(text='{"type": "Undang-Undang", "type_abbrev": "UU"}')
-
-    google = ModuleType("google")
-    google.genai = MagicMock(Client=MagicMock(return_value=MagicMock(models=BlockingModels())))
-    monkeypatch.setattr(f"{_MODULE}.METADATA_FALLBACK_TIMEOUT_SECONDS", 0.05, raising=False)
-    try:
-        with (
-            _ingesting(lambda *_a, **_k: "synthetic raw text"),
-            patch.dict(sys.modules, {"google": google}),
-        ):
-            result = await service.ingest_legal_document(
-                "/tmp/synthetic.pdf", category="99_synthetic"
-            )
-            still_blocked = not call_returned.is_set()
-    finally:
-        release.set()
-
-    assert still_blocked
-    assert result["legal_metadata"]["type_abbrev"] == "SYNTHETIC"
-
-
-@pytest.mark.asyncio
-async def test_a_model_call_that_answers_still_fills_the_metadata():
-    service = _build_service()
-    service.metadata_extractor.extract.return_value = {}
-
-    class AnsweringModels:
-        def generate_content(self, **_kwargs):
-            return MagicMock(text='{"type": "Undang-Undang", "type_abbrev": "UU", "number": "7"}')
-
-    google = ModuleType("google")
-    google.genai = MagicMock(Client=MagicMock(return_value=MagicMock(models=AnsweringModels())))
-    with (
-        _ingesting(lambda *_a, **_k: "synthetic raw text"),
-        patch.dict(sys.modules, {"google": google}),
-    ):
-        result = await service.ingest_legal_document("/tmp/synthetic.pdf", category="99_synthetic")
-
-    assert result["legal_metadata"]["type_abbrev"] == "UU"
 
 
 @pytest.mark.asyncio

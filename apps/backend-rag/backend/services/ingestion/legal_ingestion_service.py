@@ -51,7 +51,8 @@ def _failure_stage(error: Exception) -> IngestionStage:
     from backend.core.parsers import DocumentParseError
 
     if isinstance(error, DocumentParseError) or isinstance(
-        error.__cause__, DocumentParseError,
+        error.__cause__,
+        DocumentParseError,
     ):
         return IngestionStage.PARSING
     if "parse" in str(error).lower():
@@ -67,10 +68,12 @@ ALLOWED_RETRIEVAL_SCOPES = frozenset(
     {CURRENT_RETRIEVAL_SCOPE, HISTORICAL_RETRIEVAL_SCOPE},
 )
 
-ALLOWED_CANONICAL_COLLECTIONS = frozenset({
-    LEGAL_CANONICAL_COLLECTION,
-    "tax_genius",
-})
+ALLOWED_CANONICAL_COLLECTIONS = frozenset(
+    {
+        LEGAL_CANONICAL_COLLECTION,
+        "tax_genius",
+    }
+)
 
 
 class LegalIngestIntegrityError(RuntimeError):
@@ -259,8 +262,7 @@ def identity_triple_is_incomplete(metadata: dict[str, Any]) -> bool:
     opaque hash suffix in the id string.
     """
     return any(
-        part.upper() in _INCOMPLETE_IDENTITY_TOKENS
-        for part in _normalize_identity_triple(metadata)
+        part.upper() in _INCOMPLETE_IDENTITY_TOKENS for part in _normalize_identity_triple(metadata)
     )
 
 
@@ -637,7 +639,9 @@ class LegalIngestionService:
                         )
                     except RuntimeError:
                         # No running loop, use sync version
-                        raw_text = await asyncio.to_thread(auto_detect_and_parse, file_path, use_ocr=True)
+                        raw_text = await asyncio.to_thread(
+                            auto_detect_and_parse, file_path, use_ocr=True
+                        )
                         ocr_used = True
                         logger.info(
                             f"[STAGE 1] OCR extraction successful (sync): {len(raw_text)} characters",
@@ -711,9 +715,7 @@ class LegalIngestionService:
                     file_name=filename,
                     mime_type="application/pdf",
                     db_pool=archive_db_pool,
-                    require_distributed_lock=(
-                        retrieval_scope == HISTORICAL_RETRIEVAL_SCOPE
-                    ),
+                    require_distributed_lock=(retrieval_scope == HISTORICAL_RETRIEVAL_SCOPE),
                 )
                 drive_archive["status"] = archive_status
 
@@ -740,8 +742,7 @@ class LegalIngestionService:
                     ) from e
                 drive_archive = {"status": "failed", "reason": "archive_integrity"}
                 logger.warning(
-                    "[STAGE 1.5] Current-law Drive archive integrity failure "
-                    "(non-blocking): %s",
+                    "[STAGE 1.5] Current-law Drive archive integrity failure (non-blocking): %s",
                     e,
                     extra={
                         "document_id": document_id,
@@ -842,91 +843,9 @@ class LegalIngestionService:
                 trace_id=trace_id,
             )
 
-            # HYBRID EXTRACTION: Fallback to Google AI Studio if Pattern Extraction fails
-            # NOTE: Changed from Vertex AI to Google AI Studio (2026-02-06)
-            # Reason: Vertex AI costs were Rp 5.5M/month vs Google AI Studio ~Rp 800/month
-            if not metadata or metadata.get("type") == "UNKNOWN":
-                logger.info(
-                    "[STAGE 3] Pattern extraction failed/incomplete. Attempting Google AI Studio fallback...",
-                    extra={
-                        "document_id": document_id,
-                        "stage": "metadata_extraction",
-                        "fallback_method": "google_ai_studio",
-                    },
-                )
-                try:
-                    import json as json_module
-                    import os
-
-                    from google import genai
-
-                    api_key = os.environ.get("GOOGLE_API_KEY")
-                    if not api_key:
-                        raise ValueError("GOOGLE_API_KEY not configured")
-
-                    client = genai.Client(api_key=api_key)
-                    prompt = f"""You are an expert Indonesian Legal Analyst.
-Extract metadata from this legal document. Return ONLY a JSON object with these fields:
-- type: Full document type (e.g., "Undang-Undang", "Peraturan Pemerintah")
-- type_abbrev: Abbreviation (e.g., "UU", "PP", "PERMEN")
-- number: Document number (e.g., "6", "28")
-- year: Year (e.g., "2023", "2025")
-- title: Document title
-- issuer: Issuing body
-
-Document text (first 3000 chars):
-{cleaned_text[:3000]}
-
-Return ONLY valid JSON, no markdown."""
-
-                    response = await asyncio.wait_for(
-                        asyncio.to_thread(
-                            client.models.generate_content,
-                            model="gemini-2.0-flash",
-                            contents=prompt,
-                        ),
-                        timeout=METADATA_FALLBACK_TIMEOUT_SECONDS,
-                    )
-                    response_text = response.text.strip()
-                    # Clean markdown if present
-                    if response_text.startswith("```"):
-                        response_text = response_text.split("```")[1]
-                        if response_text.startswith("json"):
-                            response_text = response_text[4:]
-                    ai_metadata = json_module.loads(response_text)
-
-                    if ai_metadata:
-                        logger.info(
-                            f"[STAGE 3] Google AI Studio extraction successful: {ai_metadata.get('type_abbrev')} {ai_metadata.get('number')}",
-                            extra={
-                                "document_id": document_id,
-                                "stage": "metadata_extraction",
-                                "metadata_type": ai_metadata.get("type_abbrev"),
-                                "metadata_number": ai_metadata.get("number"),
-                                "fallback_success": True,
-                                "cost_effective": True,
-                            },
-                        )
-                        # Merge AI metadata, preferring AI results for missing fields
-                        if not metadata:
-                            metadata = ai_metadata
-                        else:
-                            metadata.update({k: v for k, v in ai_metadata.items() if v})
-                except Exception as e:
-                    logger.warning(
-                        "[STAGE 3] Google AI Studio fallback failed: %s",
-                        e,
-                        extra={
-                            "document_id": document_id,
-                            "stage": "metadata_extraction",
-                            "fallback_error": str(e),
-                            "error_type": type(e).__name__,
-                        },
-                    )
-
             if not metadata or metadata.get("type_abbrev") == "UNKNOWN":
                 logger.warning(
-                    "[STAGE 3] Could not extract metadata (Pattern + AI failed), using category fallback",
+                    "[STAGE 3] Could not extract metadata (Pattern failed), using category fallback",
                     extra={
                         "document_id": document_id,
                         "stage": "metadata_extraction",
@@ -1486,30 +1405,6 @@ Return ONLY valid JSON, no markdown."""
                         logger.info("OpenAI client initialized for KG extraction")
                 except Exception as e:
                     logger.warning("Could not initialize OpenAI for KG extraction: %s", e)
-
-                try:
-                    if openai_client is None:
-                        import tempfile
-
-                        from google import genai
-
-                        creds_json = settings.google_credentials_json
-                        project_id = os.environ.get("GOOGLE_PROJECT_ID", "nuzantara")
-                        location = os.environ.get("GOOGLE_LOCATION", "us-central1")
-
-                        if creds_json:
-                            with tempfile.NamedTemporaryFile(
-                                mode="w", suffix=".json", delete=False
-                            ) as f:
-                                f.write(creds_json)
-                                creds_path = f.name
-                            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds_path
-
-                        client = genai.Client(vertexai=True, project=project_id, location=location)
-                        gemini = client
-                        logger.info("Gemini client initialized for KG extraction")
-                except Exception as e:
-                    logger.warning("Could not initialize Gemini for KG extraction: %s", e)
 
                 # Create DB pool (with error handling)
                 db_pool = None

@@ -24,7 +24,6 @@ import httpx
 from PIL import Image
 
 from backend.app.core.config import settings
-from backend.llm.genai_client import GENAI_AVAILABLE, GenAIClient
 from backend.llm.ollama_client import is_ollama_available
 from backend.services.oracle.smart_oracle import download_pdf_from_drive
 
@@ -114,11 +113,11 @@ class PDFVisionService:
     Supporta download da Google Drive.
     """
 
-    def __init__(self, api_key: str = None, ai_client=None) -> None:
+    def __init__(self, api_key: str | None = None, ai_client=None) -> None:
         self.ai_client = ai_client
-        self.api_key = api_key or settings.google_api_key
-        self._genai_client: GenAIClient | None = None
-        self.model_name = "gemini-2.0-flash-lite"
+        self.api_key = api_key
+        self._genai_client: Any = None
+        self.model_name = "qwen2.5vl:7b"
         self.ollama_model = "qwen2.5vl:7b"  # confirmed working for vision OCR
         self._client: httpx.AsyncClient | None = None
 
@@ -137,22 +136,14 @@ class PDFVisionService:
             await self._client.aclose()
         logger.info("PDFVisionService HTTP client closed.")
 
-    def _get_genai_client(self) -> GenAIClient | None:
-        """Lazy load GenAI client."""
-        if self._genai_client is None and self.api_key and GENAI_AVAILABLE:
-            try:
-                self._genai_client = GenAIClient(api_key=self.api_key)
-                if self._genai_client.is_available:
-                    logger.debug("✅ PDFVisionService GenAI client loaded")
-            except Exception as e:
-                logger.warning("Failed to initialize PDFVisionService GenAI client: %s", e)
-        return self._genai_client
+    def _get_genai_client(self) -> None:
+        """Cloud Gemini Vision client is retired (local Ollama only)."""
+        return None
 
     @property
     def _available(self) -> bool:
-        """Check availability dynamically."""
-        client = self._get_genai_client()
-        return client.is_available if client else False
+        """Cloud Gemini Vision is permanently disabled."""
+        return False
 
     async def analyze_page(
         self,

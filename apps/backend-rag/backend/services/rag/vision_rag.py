@@ -17,7 +17,6 @@ import httpx
 from PIL import Image
 
 from backend.app.core.config import settings
-from backend.llm.genai_client import GENAI_AVAILABLE, GenAIClient
 from backend.llm.ollama_client import is_ollama_available
 
 logger = logging.getLogger(__name__)
@@ -49,9 +48,9 @@ class VisionRAGService:
     """
 
     def __init__(self) -> None:
-        self._genai_client: GenAIClient | None = None
-        self.vision_model_name = "gemini-2.0-flash-lite"  # Vision capable
-        self.text_model_name = "gemini-2.0-flash-lite"
+        self._genai_client: Any = None
+        self.vision_model_name = "qwen2.5vl:7b"
+        self.text_model_name = "qwen2.5vl:7b"
         self._client: httpx.AsyncClient | None = None
 
     def _get_client(self) -> httpx.AsyncClient:
@@ -69,22 +68,14 @@ class VisionRAGService:
             await self._client.aclose()
         logger.info("VisionRAGService HTTP client closed.")
 
-    def _get_genai_client(self) -> GenAIClient | None:
-        """Lazy load GenAI client."""
-        if self._genai_client is None and settings.google_api_key and GENAI_AVAILABLE:
-            try:
-                self._genai_client = GenAIClient(api_key=settings.google_api_key)
-                if self._genai_client.is_available:
-                    logger.debug("✅ VisionRAGService GenAI client loaded")
-            except Exception as e:
-                logger.warning("Failed to initialize VisionRAGService: %s", e)
-        return self._genai_client
+    def _get_genai_client(self) -> None:
+        """Cloud Gemini Vision client is retired (local Ollama only)."""
+        return None
 
     @property
     def _available(self) -> bool:
-        """Check availability dynamically."""
-        client = self._get_genai_client()
-        return client.is_available if client else False
+        """Cloud Gemini Vision is permanently disabled."""
+        return False
 
     async def process_pdf(self, pdf_path: str | Path) -> MultiModalDocument:
         """

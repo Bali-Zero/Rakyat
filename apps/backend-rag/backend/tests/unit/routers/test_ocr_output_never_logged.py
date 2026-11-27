@@ -132,7 +132,9 @@ COMPLETION_LOG = {
 
 
 @pytest.mark.asyncio
-async def test_passport_without_document_is_safe_and_does_not_log_raw_ocr(caplog: pytest.LogCaptureFixture) -> None:
+async def test_passport_without_document_is_safe_and_does_not_log_raw_ocr(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     from backend.app.routers.crm_enhanced import _auto_ocr_passport
 
     caplog.set_level(logging.DEBUG)
@@ -186,7 +188,9 @@ async def test_parse_failure_never_logs_the_raw_response(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("name", "extracted"), [case for case in OCR_CASES if case[0] != "_auto_ocr_passport"])
+@pytest.mark.parametrize(
+    ("name", "extracted"), [case for case in OCR_CASES if case[0] != "_auto_ocr_passport"]
+)
 async def test_extracted_fields_and_response_never_reach_a_log(
     name: str,
     extracted: dict[str, Any],
@@ -259,16 +263,19 @@ async def test_classifier_logs_only_known_labels(caplog: pytest.LogCaptureFixtur
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider_response, expected", [
-    (
-        '{"full_name":"QQSENTINEL7731 Holder","passport_number":"QQSENTINEL7731-ID",'
-        '"expiry_date":"2030-01-01","date_of_birth":"1990-01-01","gender":"F",'
-        '"birthplace":"QQSENTINEL7731 Place","nationality":"QQSENTINEL7731 Nation",'
-        '"provider_trace":"provider-output-QQSENTINEL7731"}',
-        {"success": True, "status": "completed"},
-    ),
-    ("provider-output-QQSENTINEL7731", {"success": False, "status": "review"}),
-])
+@pytest.mark.parametrize(
+    "provider_response, expected",
+    [
+        (
+            '{"full_name":"QQSENTINEL7731 Holder","passport_number":"QQSENTINEL7731-ID",'
+            '"expiry_date":"2030-01-01","date_of_birth":"1990-01-01","gender":"F",'
+            '"birthplace":"QQSENTINEL7731 Place","nationality":"QQSENTINEL7731 Nation",'
+            '"provider_trace":"provider-output-QQSENTINEL7731"}',
+            {"success": True, "status": "completed"},
+        ),
+        ("provider-output-QQSENTINEL7731", {"success": False, "status": "review"}),
+    ],
+)
 async def test_passport_ocr_processing_never_logs_passport_or_provider_output(
     caplog: pytest.LogCaptureFixture, provider_response: str, expected: dict[str, object]
 ) -> None:
@@ -298,7 +305,8 @@ async def test_passport_ocr_processing_never_logs_passport_or_provider_output(
     with (
         patch.object(processing.jobs, "claim", new=AsyncMock(return_value=job)),
         patch(
-            "backend.app.routers.documents_proxy.assert_drive_file_belongs_to_client", new=AsyncMock()
+            "backend.app.routers.documents_proxy.assert_drive_file_belongs_to_client",
+            new=AsyncMock(),
         ),
         patch.object(processing, "ServiceAccountDriveService", return_value=drive),
         patch.object(processing, "_image_for_vision", return_value=(b"image", "image/jpeg")),
@@ -399,23 +407,15 @@ async def test_birthplace_enrichment_never_logs_the_birthplace_or_the_response(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", ["ollama", "gemini"])
 async def test_generated_title_is_never_logged(
-    provider: str, caplog: pytest.LogCaptureFixture
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     from backend.services.crm import enrichment
 
     caplog.set_level(logging.DEBUG)
     title = f"{SENTINEL} visa question"
-    if provider == "ollama":
-        with patch("backend.llm.ollama_client.ollama_chat", new=AsyncMock(return_value=title)):
-            result = await enrichment._generate_title_via_ollama("conv-1", "prompt", 50)
-    else:
-        genai = MagicMock()
-        genai.is_available = True
-        genai.generate_content = AsyncMock(return_value={"text": title})
-        with patch("backend.llm.genai_client.get_genai_client", return_value=genai):
-            result = await enrichment._generate_title_via_gemini("conv-1", "prompt", 50)
+    with patch("backend.llm.ollama_client.ollama_chat", new=AsyncMock(return_value=title)):
+        result = await enrichment._generate_title_via_ollama("conv-1", "prompt", 50)
 
     assert result == title
     assert any("Generated title for conv conv-1" in r.getMessage() for r in caplog.records)
@@ -423,7 +423,9 @@ async def test_generated_title_is_never_logged(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("name", "extracted"), [case for case in OCR_CASES if case[0] != "_auto_ocr_passport"])
+@pytest.mark.parametrize(
+    ("name", "extracted"), [case for case in OCR_CASES if case[0] != "_auto_ocr_passport"]
+)
 async def test_a_failure_echoing_a_document_value_is_logged_by_type_only(
     name: str,
     extracted: dict[str, Any],
@@ -625,24 +627,16 @@ def httpx_error(message: str) -> Exception:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", ["ollama", "gemini"])
 @pytest.mark.parametrize("error", [ValueError, RuntimeError])
 async def test_title_provider_error_is_logged_by_type_only(
-    provider: str, error: type[Exception], caplog: pytest.LogCaptureFixture
+    error: type[Exception], caplog: pytest.LogCaptureFixture
 ) -> None:
     from backend.services.crm import enrichment
 
     caplog.set_level(logging.DEBUG)
     failure = error(f"provider echoed the message: {SENTINEL}")
-    if provider == "ollama":
-        with patch("backend.llm.ollama_client.ollama_chat", new=AsyncMock(side_effect=failure)):
-            result = await enrichment._generate_title_via_ollama("conv-1", "prompt", 50)
-    else:
-        genai = MagicMock()
-        genai.is_available = True
-        genai.generate_content = AsyncMock(side_effect=failure)
-        with patch("backend.llm.genai_client.get_genai_client", return_value=genai):
-            result = await enrichment._generate_title_via_gemini("conv-1", "prompt", 50)
+    with patch("backend.llm.ollama_client.ollama_chat", new=AsyncMock(side_effect=failure)):
+        result = await enrichment._generate_title_via_ollama("conv-1", "prompt", 50)
 
     assert result is None
     assert _leaks(caplog) == []
