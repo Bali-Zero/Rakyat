@@ -23,7 +23,10 @@ from backend.app.core.config import settings
 HERE = Path(__file__).parent
 FIXTURE = HERE / "fixtures" / "visa_cards_seed.json"
 MIGRATION = Path(__file__).resolve().parents[4] / "db" / "migrations_v2" / "396_service_cards.sql"
-SEED_SHA256 = "6bfc6cfb4be5a93720c0c54b330aa1af4fb61606744f4b398a793300a9f0bba2"
+# sha256 of the reviewed seed list, not a credential.
+SEED_SHA256 = (
+    "6bfc6cfb4be5a93720c0c54b330aa1af4fb61606744f4b398a793300a9f0bba2"  # pragma: allowlist secret
+)
 SETTING = "service_cards_seeding_codes"
 _MISSING = object()
 
