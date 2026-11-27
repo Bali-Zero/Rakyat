@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from backend.services.compliance.severity_calculator import parse_deadline_utc
+
 logger = logging.getLogger(__name__)
 
 
@@ -114,6 +116,10 @@ class ComplianceTrackerService:
         """
         return self.compliance_items.get(item_id)
 
+    @staticmethod
+    def _parse_deadline(deadline: str) -> datetime:
+        return parse_deadline_utc(deadline)
+
     def get_upcoming_deadlines(
         self,
         client_id: str | None = None,
@@ -133,19 +139,23 @@ class ComplianceTrackerService:
 
         cutoff_date = datetime.now(tz=UTC) + timedelta(days=days_ahead)
 
-        upcoming = []
+        upcoming: list[tuple[datetime, ComplianceItem]] = []
         for item in self.compliance_items.values():
             if client_id and item.client_id != client_id:
                 continue
 
-            deadline_date = datetime.fromisoformat(item.deadline.replace("Z", ""))
+            try:
+                deadline_date = self._parse_deadline(item.deadline)
+            except (TypeError, ValueError):
+                logger.warning("Skipping compliance item with invalid deadline: %s", item.item_id)
+                continue
             if deadline_date <= cutoff_date:
-                upcoming.append(item)
+                upcoming.append((deadline_date, item))
 
         # Sort by deadline
-        upcoming.sort(key=lambda x: x.deadline)
+        upcoming.sort(key=lambda entry: entry[0])
 
-        return upcoming
+        return [item for _, item in upcoming]
 
     def resolve_compliance_item(self, item_id: str) -> bool:
         """
