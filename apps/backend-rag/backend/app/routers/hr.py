@@ -832,7 +832,7 @@ async def mark_bonus_run_paid(
     current_user: dict[str, Any] = Depends(get_current_user),
     db_pool: asyncpg.Pool = Depends(get_database_pool),
 ) -> Any:
-    """Mark an approved bonus run paid, by hand, whenever Asya has paid it (payroll writers only)."""
+    """Mark an approved bonus run paid, by hand, once finance has paid it (payroll writers only)."""
     _require_payroll_writer(current_user)
     service = _get_hr_service(db_pool)
     try:
