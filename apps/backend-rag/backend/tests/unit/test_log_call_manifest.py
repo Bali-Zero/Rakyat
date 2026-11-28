@@ -279,7 +279,7 @@ def test_manifest_counts_per_file():
     counts = Counter(entry["file"] for entry in load_manifest())
     assert dict(counts) == {
         "app/routers/crm_clients.py": 23,
-        "app/routers/crm_practices.py": 38,
+        "app/routers/crm_practices.py": 41,
         "services/crm/client_core.py": 39,
         "app/services/hr/hr_service.py": 14,
         "app/routers/hr_my_late_incident.py": 1,

@@ -347,6 +347,29 @@
   },
   {
    "file": "app/routers/crm_practices.py",
+   "function": "correct_document_request_text",
+   "target": "logger.info",
+   "message": "'Document request %s text corrected on practice %s'",
+   "args": [
+    "request_id",
+    "practice_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "correct_document_request_text",
+   "target": "logger.error",
+   "message": "'Failed to correct a document request text: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
    "function": "create_practice",
    "target": "log_database_operation",
    "message": "'CREATE'",
@@ -459,6 +482,17 @@
    "message": "'RBAC: Practice %s not visible to caller'",
    "args": [
     "practice_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "get_practice_document_requests",
+   "target": "logger.error",
+   "message": "'Failed to get document requests: %s'",
+   "args": [
+    "type(e).__name__"
    ],
    "fields": {},
    "exc_info": null

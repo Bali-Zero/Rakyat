@@ -17,6 +17,8 @@ import {
   RequiredDocumentUpdate,
   DocumentRequestCreate,
   DocumentRequestResult,
+  DocumentRequestTextCorrection,
+  PracticeDocumentRequest,
   ClientDocumentUpload,
   ClientRequiredDocument,
 } from "@/lib/types/required-documents";
@@ -34,8 +36,23 @@ export function useRequiredDocuments(
   const [clientDocuments, setClientDocuments] = useState<
     ClientRequiredDocument[]
   >([]);
+  const [requests, setRequests] = useState<PracticeDocumentRequest[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Where each document request of the practice stands. Asked only after the documents
+  // answered; a failure leaves the rows and the states as they were and says nothing.
+  const fetchRequestStates = useCallback(async () => {
+    if (!practiceId) return;
+    try {
+      const result = await api.get<PracticeDocumentRequest[]>(
+        `/api/crm/practices/${practiceId}/document-requests`,
+      );
+      setRequests(Array.isArray(result) ? result : []);
+    } catch {
+      // swallowed on purpose: the documents of the practice must keep showing
+    }
+  }, [practiceId]);
 
   // Fetch required documents for a practice (CRM view)
   const fetchPracticeDocuments = useCallback(async () => {
@@ -49,12 +66,13 @@ export function useRequiredDocuments(
         `/api/crm/practices/${practiceId}/required-documents`,
       );
       setDocuments(result || []);
+      void fetchRequestStates();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load documents");
     } finally {
       setIsLoading(false);
     }
-  }, [practiceId]);
+  }, [practiceId, fetchRequestStates]);
 
   // Fetch client's required documents across all practices (Portal view)
   const fetchClientDocuments = useCallback(async () => {
@@ -123,10 +141,31 @@ export function useRequiredDocuments(
             ? current
             : [...current, result.document],
         );
+        void fetchRequestStates();
         return result;
       } finally {
         setIsLoading(false);
       }
+    },
+    [practiceId, fetchRequestStates],
+  );
+
+  // Correct the text the client reads for a slot a request created (team member).
+  const correctRequestText = useCallback(
+    async (requestId: number, clientText: string) => {
+      if (!practiceId) throw new Error("Practice ID required");
+
+      const body: DocumentRequestTextCorrection = { client_text: clientText };
+      const result = await api.patch<DocumentRequestResult>(
+        `/api/crm/practices/${practiceId}/document-requests/${requestId}`,
+        body,
+      );
+      setDocuments((current) =>
+        current.map((document) =>
+          document.id === result.document.id ? result.document : document,
+        ),
+      );
+      return result;
     },
     [practiceId],
   );
@@ -212,6 +251,18 @@ export function useRequiredDocuments(
     }
   }, [clientId, fetchClientDocuments]);
 
+  // The newest request of each slot (the list comes newest first; the id decides anyway)
+  const requestsBySlot = useMemo(() => {
+    const bySlot: Record<number, PracticeDocumentRequest> = {};
+    for (const request of requests) {
+      const slot = request.required_document_id;
+      if (slot === null || slot === undefined) continue;
+      const known = bySlot[slot];
+      if (!known || request.id > known.id) bySlot[slot] = request;
+    }
+    return bySlot;
+  }, [requests]);
+
   // Stats - optimized with useMemo
   const stats = useMemo(
     () => ({
@@ -240,6 +291,8 @@ export function useRequiredDocuments(
     stats,
     addDocument,
     requestDocument,
+    requestsBySlot,
+    correctRequestText,
     updateDocument,
     deleteDocument,
     uploadClientDocument,

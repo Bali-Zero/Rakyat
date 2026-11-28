@@ -12,6 +12,7 @@ import {
   X,
   ChevronDown,
   Eye,
+  Pencil,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -34,10 +35,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { ApiError } from "@/lib/api/error-handler";
 import { useRequiredDocuments } from "@/lib/hooks/useRequiredDocuments";
+import { nameOf, shortDate } from "@/lib/document-request-format";
 import {
   RequiredDocument,
   DocumentRequestCreate,
+  DocumentRequestState,
   DocumentStatus,
+  PracticeDocumentRequest,
   DOCUMENT_TYPE_OPTIONS,
 } from "@/lib/types/required-documents";
 
@@ -235,6 +239,116 @@ function AddDocumentModal({
   );
 }
 
+// Where a request stands, in the words the consultant reads
+const REQUEST_STATE_TEXT: Record<DocumentRequestState, string> = {
+  pending: "waiting for the card review",
+  added_to_card: "now on the card",
+  case_only: "this case only",
+};
+
+/** The slot states in which the text can still be corrected (the client has not answered). */
+const CORRECTABLE_STATUSES: DocumentStatus[] = ["pending", "rejected"];
+
+/** The message a failed correction shows; a 409 or a 404 is picked from `detail.code`. */
+function correctionErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    const code = (err.data as { detail?: { code?: unknown } } | undefined)
+      ?.detail?.code;
+    if (code === "practice_closed")
+      return "This practice is closed: its documents can no longer be changed.";
+    if (code === "slot_withdrawn")
+      return "This document was removed from the practice.";
+    if (code === "slot_answered")
+      return "The client already sent this document: mark it rejected first.";
+    if (code === "request_not_found") return "This request no longer exists.";
+    if (err.status === 403)
+      return "You cannot change documents on this practice.";
+  }
+  return "Could not save the text. Try again.";
+}
+
+function CorrectTextDialog({
+  document,
+  request,
+  onClose,
+  onCorrect,
+}: {
+  document: RequiredDocument;
+  request: PracticeDocumentRequest;
+  onClose: () => void;
+  onCorrect: (requestId: number, clientText: string) => Promise<unknown>;
+}) {
+  const current = document.description ?? "";
+  const [text, setText] = useState(current);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const trimmed = text.trim();
+  const canSave = !!trimmed && trimmed !== current.trim() && !sending;
+
+  const save = async () => {
+    if (!canSave) return;
+    setSending(true);
+    setError(null);
+    try {
+      await onCorrect(request.id, trimmed);
+    } catch (err) {
+      setError(correctionErrorMessage(err));
+      setSending(false);
+      return;
+    }
+    setSending(false);
+    toast.success("Text corrected");
+    onClose();
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Correct the text for the client</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="text-sm text-muted-foreground space-y-1">
+            <p>
+              The client sees the new text in the portal at once; nothing is
+              sent to them. The reviewers are not emailed again.
+            </p>
+            {request.state === "added_to_card" && (
+              <p>
+                The service card keeps its own text: only this practice changes.
+              </p>
+            )}
+          </div>
+          <div>
+            <Label htmlFor="correct-client-text">What the client reads</Label>
+            <Textarea
+              id="correct-client-text"
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              rows={4}
+              maxLength={2000}
+            />
+          </div>
+          {error && (
+            <p role="alert" className="text-sm text-[var(--state-danger)]">
+              {error}
+            </p>
+          )}
+          <div className="flex gap-2 justify-end">
+            <Button variant="outline" onClick={onClose} disabled={sending}>
+              Cancel
+            </Button>
+            <Button onClick={() => void save()} disabled={!canSave}>
+              Save text
+            </Button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // Document Review Modal
 function DocumentReviewModal({
   document,
@@ -351,10 +465,17 @@ export function RequiredDocumentsCard({
     requestDocument,
     updateDocument,
     deleteDocument,
+    requestsBySlot,
+    correctRequestText: correctRequestTextOrAbsent,
   } = useRequiredDocuments({ practiceId });
+  // A test may mock the hook with its base shape: absent means no states and no button.
+  const requestStates = requestsBySlot ?? {};
+  const correctRequestText = correctRequestTextOrAbsent as
+    typeof correctRequestTextOrAbsent | undefined;
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [reviewDoc, setReviewDoc] = useState<RequiredDocument | null>(null);
+  const [correctDoc, setCorrectDoc] = useState<RequiredDocument | null>(null);
   const [processingId, setProcessingId] = useState<number | null>(null);
 
   const handleDelete = (docId: number) => {
@@ -442,84 +563,108 @@ export function RequiredDocumentsCard({
             )}
           </div>
         ) : (
-          documents.map((doc) => (
-            <div
-              key={doc.id}
-              className={`p-3 hover:bg-muted/50 transition-colors ${
-                doc.is_required
-                  ? "border-l-2 border-l-[var(--state-warning)]"
-                  : ""
-              }`}
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium truncate">
-                      {doc.document_label}
-                    </span>
-                    {doc.is_required && (
-                      <Badge
-                        variant="secondary"
-                        className="text-[10px] bg-[color-mix(in_srgb,var(--state-warning)_10%,transparent)] text-[var(--state-warning)]"
-                      >
-                        Required
-                      </Badge>
-                    )}
-                  </div>
-                  {doc.description && (
-                    <p className="text-xs text-muted-foreground truncate">
-                      {doc.description}
-                    </p>
-                  )}
-                  <div className="flex items-center gap-2 mt-1">
-                    <StatusBadge status={doc.status} />
-                    {doc.uploaded_by_client && (
-                      <span className="text-xs text-[var(--state-success)] flex items-center gap-1">
-                        <CheckCircle className="w-3 h-3" />
-                        Uploaded
+          documents.map((doc) => {
+            const request = requestStates[doc.id];
+            return (
+              <div
+                key={doc.id}
+                className={`p-3 hover:bg-muted/50 transition-colors ${
+                  doc.is_required
+                    ? "border-l-2 border-l-[var(--state-warning)]"
+                    : ""
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium truncate">
+                        {doc.document_label}
                       </span>
+                      {doc.is_required && (
+                        <Badge
+                          variant="secondary"
+                          className="text-[10px] bg-[color-mix(in_srgb,var(--state-warning)_10%,transparent)] text-[var(--state-warning)]"
+                        >
+                          Required
+                        </Badge>
+                      )}
+                    </div>
+                    {doc.description && (
+                      <p className="text-xs text-muted-foreground truncate">
+                        {doc.description}
+                      </p>
+                    )}
+                    <div className="flex items-center gap-2 mt-1">
+                      <StatusBadge status={doc.status} />
+                      {doc.uploaded_by_client && (
+                        <span className="text-xs text-[var(--state-success)] flex items-center gap-1">
+                          <CheckCircle className="w-3 h-3" />
+                          Uploaded
+                        </span>
+                      )}
+                    </div>
+                    {request && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {`Added by ${nameOf(request.requested_by)} · ${shortDate(
+                          request.requested_at,
+                        )} · ${REQUEST_STATE_TEXT[request.state] ?? ""}`}
+                      </p>
                     )}
                   </div>
-                </div>
 
-                {!readOnly && (
-                  <div className="flex items-center gap-1">
-                    {/* Every slot gets the status action: a document can reach
+                  {!readOnly && (
+                    <div className="flex items-center gap-1">
+                      {request &&
+                        correctRequestText &&
+                        CORRECTABLE_STATUSES.includes(doc.status) && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8"
+                            onClick={() => setCorrectDoc(doc)}
+                            aria-label="Correct the text for the client"
+                            title="Correct the text for the client"
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </Button>
+                        )}
+                      {/* Every slot gets the status action: a document can reach
                       the team through the Vault, WhatsApp or email, not only
                       through this slot's upload button. */}
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-8 w-8"
-                      onClick={() => setReviewDoc(doc)}
-                      aria-label={
-                        doc.uploaded_by_client
-                          ? "Review document"
-                          : "Update status"
-                      }
-                      title={
-                        doc.uploaded_by_client
-                          ? "Review document"
-                          : "Update status"
-                      }
-                    >
-                      <Eye className="w-4 h-4" />
-                    </Button>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="h-8 w-8 text-destructive hover:text-destructive"
-                      onClick={() => handleDelete(doc.id)}
-                      disabled={processingId === doc.id}
-                      aria-label="Delete document"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </div>
-                )}
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8"
+                        onClick={() => setReviewDoc(doc)}
+                        aria-label={
+                          doc.uploaded_by_client
+                            ? "Review document"
+                            : "Update status"
+                        }
+                        title={
+                          doc.uploaded_by_client
+                            ? "Review document"
+                            : "Update status"
+                        }
+                      >
+                        <Eye className="w-4 h-4" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-8 w-8 text-destructive hover:text-destructive"
+                        onClick={() => handleDelete(doc.id)}
+                        disabled={processingId === doc.id}
+                        aria-label="Delete document"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
 
@@ -530,6 +675,16 @@ export function RequiredDocumentsCard({
         onRequest={requestDocument}
         isLoading={isLoading}
       />
+
+      {correctDoc && requestStates[correctDoc.id] && correctRequestText && (
+        <CorrectTextDialog
+          key={correctDoc.id}
+          document={documents.find((d) => d.id === correctDoc.id) ?? correctDoc}
+          request={requestStates[correctDoc.id]}
+          onClose={() => setCorrectDoc(null)}
+          onCorrect={correctRequestText}
+        />
+      )}
 
       <DocumentReviewModal
         document={reviewDoc}

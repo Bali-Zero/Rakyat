@@ -40,6 +40,24 @@ export interface DocumentRequestResult {
   document: RequiredDocument;
 }
 
+/** Where a request stands for the card reviewers (the request's `decision`). */
+export type DocumentRequestState = "pending" | "added_to_card" | "case_only";
+
+/** One request made on a practice: its state, never its text, reason or client. */
+export interface PracticeDocumentRequest {
+  id: number;
+  /** The slot the request created; null when the row has none. */
+  required_document_id: number | null;
+  state: DocumentRequestState;
+  requested_by: string;
+  requested_at: string;
+}
+
+/** The new text the client reads for a slot a request created. */
+export interface DocumentRequestTextCorrection {
+  client_text: string;
+}
+
 export interface RequiredDocumentUpdate {
   status?: DocumentStatus;
   team_member_notes?: string;

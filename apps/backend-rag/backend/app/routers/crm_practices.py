@@ -40,10 +40,12 @@ from backend.services.common.background import spawn
 from backend.services.crm.document_requests import (
     DOCUMENT_TYPE_PATTERN,
     DocumentRequestRefused,
+    correct_client_text,
     create_document_request,
     decide_request,
     derive_document_type,
     is_card_reviewer,
+    list_practice_requests,
     list_requests,
     notify_reviewers_after_commit,
     reopen_request,
@@ -3348,6 +3350,86 @@ def _require_card_reviewer(current_user: dict) -> None:
     # First, before any connection is taken: a non-reviewer never touches the database.
     if not is_card_reviewer(current_user):
         raise HTTPException(status_code=403, detail="Card reviewers only")
+
+
+class DocumentRequestTextCorrection(BaseModel):
+    """The new text the client reads for a slot a request created (V2, third cut)."""
+
+    client_text: Annotated[str, _Stripped, Field(max_length=2000)]
+
+
+@router.get("/{practice_id}/document-requests")
+async def get_practice_document_requests(
+    practice_id: int = Path(..., gt=0),
+    current_user: dict = Depends(process_session),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> list[dict[str, Any]]:
+    """Where each document request made on this practice stands (same readers as its documents)."""
+    try:
+        async with db_pool.acquire() as conn:
+            await require_visible_process(conn, practice_id, current_user)
+            return await list_practice_requests(conn, practice_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to get document requests: %s", type(e).__name__)
+        raise handle_database_error(e)
+
+
+@router.patch(
+    "/{practice_id}/document-requests/{request_id}",
+    response_model=DocumentRequestResponse,
+    dependencies=[Depends(visible_process_target)],
+)
+async def correct_document_request_text(
+    practice_id: int = Path(..., gt=0),
+    request_id: int = Path(..., gt=0, le=_BIGINT_MAX),
+    payload: DocumentRequestTextCorrection = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """Correct the client text of the slot a request created (admin, creator or assignee).
+
+    Writes the slot and the request in one transaction; sends nothing and decides nothing.
+    """
+    try:
+        async with db_pool.acquire() as conn:
+            practice = await conn.fetchrow(
+                "SELECT id, created_by, assigned_to FROM practices WHERE id = $1",
+                practice_id,
+            )
+            if not practice:
+                raise HTTPException(status_code=404, detail="Practice not found")
+
+            user_is_admin, created_by_match, assigned_to_match = _practice_ownership_flags(
+                current_user, practice.get("created_by"), practice.get("assigned_to")
+            )
+            if not user_is_admin and not (created_by_match or assigned_to_match):
+                _deny_practice_mutation(
+                    practice_id,
+                    current_user,
+                    "You don't have permission to correct documents on this practice",
+                )
+
+            try:
+                document = await correct_client_text(
+                    conn,
+                    practice_id=practice_id,
+                    request_id=request_id,
+                    client_text=payload.client_text,
+                )
+            except DocumentRequestRefused as refused:
+                if refused.code == "practice_not_found":
+                    raise HTTPException(status_code=404, detail="Practice not found") from refused
+                raise _refused_to_http(refused) from refused
+
+        logger.info("Document request %s text corrected on practice %s", request_id, practice_id)
+        return {"request_id": request_id, "document": document}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to correct a document request text: %s", type(e).__name__)
+        raise handle_database_error(e)
 
 
 @router.get("/document-requests/review")
