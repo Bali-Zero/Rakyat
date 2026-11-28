@@ -295,6 +295,25 @@ async def test_a_deleted_slot_is_slot_withdrawn_and_the_request_is_unchanged(
 
 
 @pytest.mark.asyncio
+async def test_a_request_with_no_slot_id_is_slot_withdrawn_and_nothing_changes(
+    world: World,
+) -> None:
+    """`required_document_id` is nullable and has no foreign key: a row without it is refused
+    and neither the request nor any slot of the practice is written."""
+    practice = await world.practice()
+    asked = await world.ask(practice)
+    await world.conn.execute(
+        "UPDATE practice_document_requests SET required_document_id = NULL WHERE id = $1",
+        asked.request_id,
+    )
+    before = await world.snapshot(practice, asked.request_id)
+    with pytest.raises(DocumentRequestRefused) as refused:
+        await world.correct(practice, asked.request_id)
+    assert refused.value.code == "slot_withdrawn"
+    assert await world.snapshot(practice, asked.request_id) == before
+
+
+@pytest.mark.asyncio
 async def test_an_uploaded_slot_is_slot_answered_and_a_rejected_one_is_corrected(
     world: World,
 ) -> None:

@@ -699,7 +699,10 @@ async def correct_client_text(
         if request is None:
             raise DocumentRequestRefused("request_not_found", "Document request not found")
         slot_id = request["required_document_id"]
-        slot_state = await conn.fetchrow(_SLOT_LOCK, practice_id, slot_id)
+        # The column is nullable: a request with no slot id has nothing to lock.
+        slot_state = (
+            await conn.fetchrow(_SLOT_LOCK, practice_id, slot_id) if slot_id is not None else None
+        )
         if slot_state is None:
             raise DocumentRequestRefused(
                 "slot_withdrawn", "This document was removed from the practice."

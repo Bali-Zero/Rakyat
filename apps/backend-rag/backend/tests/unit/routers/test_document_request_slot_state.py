@@ -150,7 +150,7 @@ class FakeConn:
                 return None
             return request
         if "FROM practice_required_documents" in flat and "FOR UPDATE" in flat:
-            if self.slot_status is None:
+            if self.slot_status is None or args[1] is None:
                 return None
             return {"status": self.slot_status}
         if flat.upper().startswith("UPDATE PRACTICE_REQUIRED_DOCUMENTS"):
@@ -437,11 +437,13 @@ def test_a_closed_practice_is_409_practice_closed(world: World, status: str) -> 
 
 
 def test_a_request_with_no_slot_is_409_slot_withdrawn(world: World) -> None:
+    """The column is nullable: with no slot id there is nothing to lock, so no statement at all
+    names the slot table (the fake's slot is left `pending`, to prove it is never reached)."""
     world.conn.request = _request_row(required_document_id=None)
-    world.conn.slot_status = None
     response = world.correct(text_body())
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "slot_withdrawn"
+    assert not [sql for sql, _ in world.conn.queries if "practice_required_documents" in sql]
     assert_nothing_written(world)
 
 

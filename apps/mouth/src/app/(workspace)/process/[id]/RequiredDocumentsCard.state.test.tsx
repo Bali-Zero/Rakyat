@@ -285,6 +285,32 @@ describe("RequiredDocumentsCard request state and text correction", () => {
     },
   );
 
+  it("cannot be dismissed while the text is being sent, so a late failure keeps what was typed", async () => {
+    let fail: (reason: unknown) => void = () => {};
+    apiMock.patch.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+        }),
+    );
+    const dialog = await openCorrection();
+    fireEvent.change(textbox(), { target: { value: "My typed text." } });
+    fireEvent.click(save());
+    await waitFor(() => expect(apiMock.patch).toHaveBeenCalledTimes(1));
+    fireEvent.keyDown(dialog, { key: "Escape", code: "Escape" });
+    expect(screen.getByRole("dialog")).toBeTruthy();
+
+    fail(
+      new ApiError("closed", 409, {
+        detail: { code: "practice_closed", message: "x" },
+      }),
+    );
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "This practice is closed: its documents can no longer be changed.",
+    );
+    expect(textbox().value).toBe("My typed text.");
+  });
+
   it("shows the 403 message and, for anything else, the generic one", async () => {
     apiMock.patch.mockRejectedValueOnce(new ApiError("Forbidden", 403, {}));
     await openCorrection();
