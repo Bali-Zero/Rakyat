@@ -139,13 +139,11 @@ describe("payroll page bonus runs", () => {
     hrApiMock.listPayrollPeriods.mockResolvedValue({ periods: [] });
   });
 
-  it("lists the bonus months below the periods, with the payday and a disabled Approve before 1 Dec", async () => {
+  it("lists the bonus months below the periods, with no payday and a disabled Approve before 1 Dec", async () => {
     hrApiMock.listBonusRuns.mockResolvedValue({ runs: [bonusRun] });
     render(<PayrollPage />);
     expect(await screen.findByText("November 2026")).toBeVisible();
-    expect(
-      screen.getByText("7 days after the Dec 2026 salary is paid"),
-    ).toBeVisible();
+    expect(screen.getByText("Payday known once the month ends")).toBeVisible();
     expect(screen.getByRole("button", { name: /Approve run/ })).toBeDisabled();
   });
 

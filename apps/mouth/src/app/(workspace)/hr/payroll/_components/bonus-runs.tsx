@@ -135,17 +135,29 @@ export function BonusRuns({
               )}
               {run.held_count > 0 && (
                 <div className="text-sm text-[var(--bz-text-3)]">
-                  {run.held_count} held · <Money value={run.held_total_idr} /> ·
-                  carried to a later run
+                  {run.status === "open" ? (
+                    <>
+                      {run.held_count} held ·{" "}
+                      <Money value={run.held_total_idr} /> · carried to a later
+                      run
+                    </>
+                  ) : (
+                    <>
+                      {run.held_count} carried ·{" "}
+                      <Money value={run.held_total_idr} /> · paid by a later run
+                    </>
+                  )}
                 </div>
               )}
               <div className="text-sm text-[var(--bz-text-3)]">
                 {run.status === "paid" && run.paid_at
                   ? `Paid ${bonusDayLabel(run.paid_at)}`
-                  : bonusPaydayText(
-                      run.expected_payday,
-                      run.payday_salary_month,
-                    )}
+                  : run.ended
+                    ? bonusPaydayText(
+                        run.expected_payday,
+                        run.payday_salary_month,
+                      )
+                    : "Payday known once the month ends"}
               </div>
             </div>
             {canWrite && run.status === "open" && (

@@ -69,6 +69,27 @@ describe("bonus runs on the payroll page", () => {
     expect(screen.getByText("Open")).toBeVisible();
   });
 
+  it("names no salary for the payday of a month still running, and calls its held rows held", () => {
+    render(
+      <BonusRuns
+        runs={[
+          run({
+            bonus_month: "2026-12-01",
+            ended: false,
+            can_approve: false,
+            payday_salary_month: "2026-12-01",
+          }),
+        ]}
+        canWrite
+        onChanged={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Payday known once the month ends")).toBeVisible();
+    expect(document.body).not.toHaveTextContent("Dec 2026 salary");
+    expect(document.body).toHaveTextContent("1 held");
+    expect(document.body).toHaveTextContent("carried to a later run");
+  });
+
   it("confirms with the gross amount and the pending count, then posts the figures shown", async () => {
     const onChanged = vi.fn();
     render(<BonusRuns runs={[run()]} canWrite onChanged={onChanged} />);
@@ -145,7 +166,8 @@ describe("bonus runs on the payroll page", () => {
     expect(nov).toHaveTextContent("Rp 300.000 gross");
     expect(nov).toHaveTextContent("2 pending");
     expect(nov).toHaveTextContent("not paid by this run");
-    expect(nov).toHaveTextContent("1 held");
+    expect(nov).toHaveTextContent("1 carried");
+    expect(nov).toHaveTextContent("paid by a later run");
     expect(nov).toHaveTextContent("7 days after the Dec 2026 salary is paid");
     expect(screen.getByText("Paid 26 Dec 2026")).toBeVisible();
     expect(document.body).not.toHaveTextContent(/PPh|tax|net/i);
