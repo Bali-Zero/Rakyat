@@ -265,8 +265,10 @@ END;
 $$;
 
 -- === ROLLBACK ===
--- Soft-disable, never a hard removal: practices reference practice_types by foreign key. Refuses once a
--- receipt exists for one of the codes this migration priced: roll forward instead.
+-- Restores the catalogue as it was before 398: the old names and flags come back, the rates this migration
+-- added go, and every new practice type no practice references is DELETED. A new type that a practice
+-- already uses stays, inactive, with a NOTICE (practices reference practice_types by foreign key).
+-- Refuses once a bonus receipt exists for a code this migration priced: roll forward instead.
 DO $$ BEGIN
     IF EXISTS (SELECT 1 FROM hr_delivery_bonus_events WHERE service_code IN (
     'tax_monthly_basic_0_50',
@@ -350,7 +352,11 @@ DELETE FROM hr_bonus_rates WHERE practice_type_code IN (
     'tax_monthly_billing_bpjs_ks',
     'tax_monthly_billing_npwpd'
 );
-UPDATE practice_types SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE code IN (
+DO $$
+DECLARE
+    r record;
+BEGIN
+    FOR r IN SELECT id, code FROM practice_types WHERE code IN (
     'tax_monthly_basic_100_150',
     'tax_monthly_basic_150_200',
     'tax_monthly_basic_200_250',
@@ -374,8 +380,20 @@ UPDATE practice_types SET is_active = false, updated_at = CURRENT_TIMESTAMP WHER
     'tax_meeting',
     'tax_monthly_billing_bpjs_tk',
     'tax_monthly_billing_bpjs_ks',
-    'tax_monthly_billing_npwpd'
-);
+    'tax_monthly_billing_npwpd') LOOP
+        IF EXISTS (SELECT 1 FROM practices WHERE practice_type_id = r.id OR practice_type_code = r.code) THEN
+            UPDATE practice_types SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = r.id;
+            RAISE NOTICE 'migration 398 rollback: % is used by a practice and stays, inactive', r.code;
+        ELSE
+            BEGIN
+                DELETE FROM practice_types WHERE id = r.id;
+            EXCEPTION WHEN foreign_key_violation THEN
+                UPDATE practice_types SET is_active = false, updated_at = CURRENT_TIMESTAMP WHERE id = r.id;
+                RAISE NOTICE 'migration 398 rollback: % is referenced and stays, inactive', r.code;
+            END;
+        END IF;
+    END LOOP;
+END $$;
 UPDATE practice_types SET is_active = true, updated_at = CURRENT_TIMESTAMP WHERE code IN (
     'tax_monthly_basic_100_200',
     'tax_monthly_basic_200_plus',

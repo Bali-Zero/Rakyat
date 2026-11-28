@@ -1,24 +1,23 @@
 """The tax catalogue (owner ruling 2026-11-27, built 2026-11-28): nine monthly bands, the new tax
 services, their bonus rates, delivery slots, invoice issuer and public price list rows.
 
-The DB side (migration 398 on a migrated schema) is tests/db/test_tax_catalogue_398_pg.py; the
-amounts below are the independent oracle both files read.
+The readers (invoicing, delivery slots, public price list) must know every code BEFORE migration 398
+activates it; this file carries no read of the migration and passes on a database without the new
+codes. The migration side is test_tax_catalogue_398_release_order.py and tests/db/test_tax_catalogue_398_pg.py;
+the amounts below are the independent oracle all three read.
 """
 
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
-from backend.db.migration_base import split_migration_sql
 from backend.services.crm.delivery_catalog import _catalog, delivery_policy
 from backend.services.invoicing.entities import PRACTICE_TYPE_ENTITY_KEYS, entity_key_for_code
 
 _BACKEND = Path(__file__).resolve().parents[3]
 _CATALOGUE = _BACKEND / "data" / "bali_zero_official_prices_2026.json"
 _SNAPSHOT = _BACKEND.parents[1] / "mouth" / "data" / "bali-zero-prices.json"
-MIGRATION = _BACKEND / "db" / "migrations_v2" / "398_tax_catalogue_bands_services_rates.sql"
 
 BANDS = (
     "0_50",
@@ -121,36 +120,6 @@ def test_there_are_38_rates_and_none_for_registration_or_the_wide_codes() -> Non
         assert rates[f"tax_monthly_basic_{band}"] == rates[f"tax_monthly_bundled_{band}"]
 
 
-def test_the_migration_creates_exactly_the_ruled_rows_and_rates() -> None:
-    forward, rollback = split_migration_sql(MIGRATION.read_text(encoding="utf-8"))
-    assert rollback, "the migration must carry its rollback"
-    for code, amount in expected_rates().items():
-        assert (
-            f"('{code}', {amount}, '2026-11-01', TRUE, 'Bonus reform 2026-11-27: tax catalogue')"
-            in forward
-        ), code
-    assert forward.count("'2026-11-01', TRUE") == 38
-    assert "('tax_registration'" not in forward.split("-- Postcondition")[0]
-    for code in _band_codes(NEW_BANDS):
-        assert f"('{code}'," in forward, code
-    for code, (name, price, _bonus) in NEW_SERVICES.items():
-        # The whole tuple of THIS service, not a match anywhere in the file.
-        tuple_re = (
-            rf"\('{re.escape(code)}', '{re.escape(name)}',\s+'[^']*',\s+"
-            rf"'tax', {price if price is not None else 'NULL'}, NULL, true\)"
-        )
-        assert re.search(tuple_re, forward), code
-
-
-def test_every_new_band_copies_the_price_of_its_list_band_in_the_migration() -> None:
-    forward, _ = split_migration_sql(MIGRATION.read_text(encoding="utf-8"))
-    for family in ("basic", "bundled"):
-        for band, source in SOURCE_OF_NEW_BAND.items():
-            # The source code is the LAST element of this band's own VALUES tuple.
-            tuple_re = rf"\('tax_monthly_{family}_{band}', '[^']*',\s+'[^']*',\s+'tax_monthly_{family}_{source}'\)"
-            assert re.search(tuple_re, forward), (family, band)
-
-
 def test_the_delivery_catalogue_has_every_new_code_and_keeps_the_wide_ones() -> None:
     catalog = _catalog()
     for code in _band_codes(NEW_BANDS) + list(NEW_SERVICES):
@@ -241,3 +210,19 @@ def test_the_site_snapshot_mirrors_the_new_block() -> None:
     assert list(mirror) == list(_block(doc))
     for key, row in _block(doc).items():
         assert mirror[key]["price"] == row["price"] and mirror[key]["name"] == row["name"]
+
+
+def test_the_public_npwp_row_says_with_kitas_and_keeps_its_key_and_price() -> None:
+    doc = json.loads(_CATALOGUE.read_text(encoding="utf-8"))
+    snap = json.loads(_SNAPSHOT.read_text(encoding="utf-8"))["services_by_category"]
+    for row in (
+        doc["services"]["consultant_services"]["NPWP Personal + Coretax Activation"],
+        snap["consultant_services"]["NPWP Personal + Coretax Activation"],
+    ):
+        # The key is what consumers look up; the name and description are what a client reads.
+        assert row["name"] == "NPWP Personal + Coretax Activation (with KITAS)"
+        assert row["price"] == "1.000.000 IDR"
+        assert "with a KITAS" in row["description_en"]
+        assert "without KITAS" in row["description_en"]
+    without = _block(doc)["NPWP Personal + Coretax Activation (without KITAS)"]
+    assert without["price"] == "1.500.000 IDR"

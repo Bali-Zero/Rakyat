@@ -74,6 +74,12 @@ def _digest(doc: dict) -> str:
     doc["services"]["company_services"].pop("SLS — Hotel & Resort", None)
     # Added on 2026-11-28; pinned whole by test_tax_catalogue_2026_11_28.py.
     doc["services"]["tax_accounting"].pop("standalone_services", None)
+    # The NPWP row names its KITAS case since 2026-11-28 (the digest reads its old name and text); pinned by test_tax_catalogue_2026_11_28.py.
+    npwp = doc["services"]["consultant_services"]["NPWP Personal + Coretax Activation"]
+    npwp["name"] = "NPWP Personal + Coretax Activation"
+    npwp["description_en"] = (
+        "Personal Indonesian tax ID (NPWP) issuance with activation on the Coretax platform."
+    )
     blob = json.dumps(doc, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 

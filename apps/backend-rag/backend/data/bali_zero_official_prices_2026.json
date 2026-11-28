@@ -1192,13 +1192,13 @@
         "icon_id": "consultant-bpjs-kes"
       },
       "NPWP Personal + Coretax Activation": {
-        "name": "NPWP Personal + Coretax Activation",
+        "name": "NPWP Personal + Coretax Activation (with KITAS)",
         "price": "1.000.000 IDR",
         "tier_range": null,
         "duration": "",
         "validity": "",
         "notes": "Per person.",
-        "description_en": "Personal Indonesian tax ID (NPWP) issuance with activation on the Coretax platform.",
+        "description_en": "Personal Indonesian tax ID (NPWP) issuance with activation on the Coretax platform, for a person with a KITAS. For a person without a KITAS see \"NPWP Personal + Coretax Activation (without KITAS)\".",
         "icon_id": "consultant-npwp"
       },
       "Update Data / Coretax Activation": {

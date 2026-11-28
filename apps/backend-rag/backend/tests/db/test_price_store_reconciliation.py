@@ -61,9 +61,6 @@ CODE_TO_SHEET_LABEL: dict[str, str] = {
     "visa_c1_tourism": "C1 Tourism",
     "visa_c2_business": "C2 Business",
     "visa_c18_work_trial": "C18 Work Trial",
-    # Renamed "(with KITAS)" in practice_types on 2026-11-28 when the "(without KITAS)" service was
-    # added; the public list keeps one NPWP row, which is the with-KITAS one at the same price.
-    "tax_npwp_personal_coretax": "NPWP Personal + Coretax Activation",
 }
 
 #: The monthly tax report has nine BONUS bands per family but the public list keeps four price bands
