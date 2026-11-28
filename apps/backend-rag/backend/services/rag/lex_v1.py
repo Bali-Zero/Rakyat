@@ -47,7 +47,6 @@ FIELDS = frozenset(
     STR_FIELDS + OPT_STR_FIELDS + OPT_INT_FIELDS + INT_FIELDS + LIST_FIELDS + ("valid_from",)
 )
 ISO_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
-KEY_SEQ = re.compile(r"[0-9]{4}")
 
 
 def _sha(text: str) -> str:
@@ -102,15 +101,10 @@ def check_record(record: Any, line: int) -> None:
     for name in LIST_FIELDS:
         if not isinstance(record[name], list) or not all(isinstance(x, str) for x in record[name]):
             raise bad(f"{name} is not a list of strings")
-    key = record["chunk_key"].split("#")
-    if (
-        len(key) != 4
-        or key[0] != record["canonical_id"]
-        or key[1] != record["part"]
-        or key[2] != (record["pasal"] or "-")
-        or KEY_SEQ.fullmatch(key[3]) is None
-    ):
-        raise bad("chunk_key is malformed")
+    pasal = record["pasal"] if record["pasal"] not in (None, "") else "-"
+    expected = f"{record['canonical_id']}#{record['part']}#{pasal}#{record['seq']:04d}"
+    if record["chunk_key"] != expected:
+        raise bad("chunk_key disagrees with the record fields")
     text, header = record["text"], record["header"]
     if not 0 < len(text) <= MAX_TEXT:
         raise bad("text length out of bounds")

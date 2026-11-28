@@ -342,6 +342,10 @@ REFUSALS = {
     "list_type": mutate(amended_by="x"),
     "key_segments": mutate(chunk_key="UU-1-2020#body#1"),
     "key_canonical": mutate(chunk_key="OTHER#body#1#0000"),
+    "key_pasal_disagrees": mutate(chunk_key="UU-1-2020#body#7#0000"),
+    "key_part_disagrees": mutate(chunk_key="UU-1-2020#lampiran#2#0000"),
+    "key_seq_disagrees": mutate(chunk_key="UU-1-2020#body#2#0003"),
+    "key_seq_unpadded": mutate(chunk_key="UU-1-2020#body#2#0"),
     "bad_id": mutate(id=str(uuid.uuid4())),
     "bad_body_sha": mutate(body_sha256="0" * 64),
     "no_header": retext("no header here"),
@@ -422,12 +426,18 @@ def test_eval_recall_arithmetic(db, tmp_path):
             "question": a["text"],
             "domain": "tax",
             "ready_norms": ["UU-1-2020", "PP-2-2021"],
-            "ready_pasal": [{"norm": "UU-1-2020", "pasal": "1"}],
+            "ready_pasal": [["UU-1-2020", "1"]],
         },
-        {"id": "c2", "question": b["text"], "domain": "company", "ready_norms": ["PP-2-2021"]},
+        {
+            "id": "c2",
+            "question": b["text"],
+            "domain": "company",
+            "ready_norms": ["PP-2-2021"],
+            "ready_pasal": [],
+        },
     ]
     cpath = tmp_path / "cases.json"
-    cpath.write_text(json.dumps(cases))
+    cpath.write_text(json.dumps({"cases": cases}))
     cdigest = hashlib.sha256(cpath.read_bytes()).hexdigest()
     spath = tmp_path / "supersedes.json"
     spath.write_text(json.dumps({"UU-1-2020": ["old-1"], "PP-2-2021": ["old-2"]}))
@@ -463,3 +473,81 @@ def test_nothing_else_in_backend_imports_this_module():
         if p.resolve() != own and "/tests/" not in str(p) and "lex_v1" in p.read_text()
     ]
     assert offenders == []
+
+
+def test_key_with_dash_for_missing_pasal_and_high_seq_passes(tmp_path):
+    rec = record("UU-5-2020", "x", 9999)
+    rec.update(pasal=None, chunk_key="UU-5-2020#body#-#9999")
+    path, digest = write_chunks(tmp_path, [reseal(rec)])
+    assert len(lex.Release.load(path, digest).records) == 1
+
+
+def test_eval_loaders_parse_the_real_shapes(tmp_path):
+    cases = {
+        "ambiguous": [],
+        "cases": [
+            {
+                "id": "Q1",
+                "domain": "immigration",
+                "question": "q",
+                "ready_norms": ["A-1-2020"],
+                "ready_pasal": [["A-1-2020", "56"]],
+            }
+        ],
+    }
+    cpath = tmp_path / "c.json"
+    cpath.write_text(json.dumps(cases))
+    spath = tmp_path / "s.json"
+    spath.write_text(json.dumps({"A-1-2020": ["old_1"]}))
+    cdigest = hashlib.sha256(cpath.read_bytes()).hexdigest()
+    sdigest = hashlib.sha256(spath.read_bytes()).hexdigest()
+    assert len(cli.load_cases(cpath, cdigest)) == 1
+    assert cli.old_to_canonical(cli.load_supersedes(spath, sdigest)) == {"old_1": "A-1-2020"}
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        [],
+        {"cases": []},
+        {
+            "cases": [
+                {
+                    "id": "Q",
+                    "domain": "d",
+                    "question": "q",
+                    "ready_norms": ["A"],
+                    "ready_pasal": [{"norm": "A", "pasal": "1"}],
+                }
+            ]
+        },
+        {
+            "cases": [
+                {
+                    "id": "Q",
+                    "domain": "d",
+                    "question": "q",
+                    "ready_norms": ["A"],
+                    "ready_pasal": [["A"]],
+                }
+            ]
+        },
+        {
+            "cases": [
+                {"id": "Q", "domain": "d", "question": "q", "ready_norms": [], "ready_pasal": []}
+            ]
+        },
+    ],
+)
+def test_eval_cases_other_shapes_refused(tmp_path, bad):
+    path = tmp_path / "c.json"
+    path.write_text(json.dumps(bad))
+    with pytest.raises(ValueError):
+        cli.load_cases(path, hashlib.sha256(path.read_bytes()).hexdigest())
+
+
+def test_eval_supersedes_other_shapes_refused(tmp_path):
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps({"A": "old"}))
+    with pytest.raises(ValueError):
+        cli.load_supersedes(path, hashlib.sha256(path.read_bytes()).hexdigest())

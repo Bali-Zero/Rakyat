@@ -59,19 +59,46 @@ def load_json(path: Path, sha256: str):
     return json.loads(lex_v1.read_pinned(path, sha256))
 
 
+def load_cases(path: Path, sha256: str) -> list[dict]:
+    """Parse the pinned cases file: {"cases": [{id, domain, question, ready_norms, ready_pasal}]}."""
+    data = load_json(path, sha256)
+    cases = data.get("cases") if isinstance(data, dict) else None
+    if not isinstance(cases, list) or not cases:
+        raise ValueError("cases file must be an object with a non-empty 'cases' list")
+    for n, case in enumerate(cases, 1):
+        ok = (
+            isinstance(case, dict)
+            and all(isinstance(case.get(k), str) and case[k] for k in ("id", "domain", "question"))
+            and isinstance(case.get("ready_norms"), list)
+            and case["ready_norms"]
+            and all(isinstance(x, str) for x in case["ready_norms"])
+            and isinstance(case.get("ready_pasal"), list)
+            and all(
+                isinstance(x, list) and len(x) == 2 and all(isinstance(y, str) for y in x)
+                for x in case["ready_pasal"]
+            )
+        )
+        if not ok:
+            raise ValueError(f"cases file: case {n} has an unexpected shape")
+    return cases
+
+
+def load_supersedes(path: Path, sha256: str) -> dict[str, list[str]]:
+    data = load_json(path, sha256)
+    if not isinstance(data, dict) or not all(
+        isinstance(k, str) and isinstance(v, list) and all(isinstance(x, str) for x in v)
+        for k, v in data.items()
+    ):
+        raise ValueError("supersedes file must map canonical id to a list of old ids")
+    return data
+
+
 def old_to_canonical(supersedes: dict) -> dict[str, str]:
     return {old: canonical for canonical, olds in supersedes.items() for old in olds}
 
 
 def pasal_pairs(case: dict) -> set[tuple[str, str]]:
-    pairs = set()
-    for item in case.get("ready_pasal") or []:
-        if isinstance(item, dict):
-            pairs.add((str(item["norm"]), str(item["pasal"])))
-        else:
-            norm, _, pasal = str(item).partition("#")
-            pairs.add((norm, pasal))
-    return pairs
+    return {(norm, pasal) for norm, pasal in case["ready_pasal"]}
 
 
 def score(case: dict, found: set[str], located: set[tuple[str, str]]) -> dict:
@@ -98,6 +125,37 @@ def aggregate(rows: list[dict], path: str) -> dict:
     }
 
 
+def baseline_service():
+    """Build the SearchService the way the app does: service_initializer._init_search_service
+    (backend/app/setup/service_initializer.py:187-217), minus app state, registry and the
+    Qdrant probe. VectorSearchTool is created with user_level=3 (agentic/__init__.py:176).
+    """
+    from backend.app.core.config import settings
+    from backend.core.embeddings import create_embeddings_generator
+    from backend.services.ingestion.collection_manager import CollectionManager
+    from backend.services.misc.cultural_insights_service import CulturalInsightsService
+    from backend.services.routing.conflict_resolver import ConflictResolver
+    from backend.services.routing.query_router_integration import QueryRouterIntegration
+    from backend.services.routing.surface_router import SurfaceRouter
+    from backend.services.search.search_service import SearchService
+
+    collection_manager = CollectionManager(qdrant_url=settings.qdrant_url)
+    service = SearchService(
+        collection_manager=collection_manager,
+        conflict_resolver=ConflictResolver(),
+        cultural_insights=CulturalInsightsService(
+            collection_manager=collection_manager, embedder=create_embeddings_generator()
+        ),
+        query_router=QueryRouterIntegration(),
+        surface_router=SurfaceRouter(),
+    )
+    if settings.reranker_backend == "cross-encoder":
+        from backend.services.rag.reranker_integration import add_cross_encoder_reranking
+
+        add_cross_encoder_reranking(service)
+    return service
+
+
 async def baseline_hits(service, question: str, k: int, level: int) -> list[dict]:
     result = await service.search_with_reranking(
         query=question, user_level=level, limit=k, collection_override=BASELINE_COLLECTION
@@ -106,11 +164,10 @@ async def baseline_hits(service, question: str, k: int, level: int) -> list[dict
 
 
 async def evaluate(db: QdrantClient, args, api: httpx.AsyncClient, service) -> dict:
-    cases = load_json(args.cases, args.sha256)
-    cases = cases["cases"] if isinstance(cases, dict) else cases
+    cases = load_cases(args.cases, args.sha256)
     mapping = {}
     if args.supersedes:
-        mapping = old_to_canonical(load_json(args.supersedes, args.supersedes_sha256))
+        mapping = old_to_canonical(load_supersedes(args.supersedes, args.supersedes_sha256))
     today, rows = date.today(), []
     for case in cases:
         found = await lex_v1.search(db, case["question"], args.k, api, on=today)
@@ -187,9 +244,7 @@ async def run(args) -> dict:
             if args.command == "query":
                 hits = await lex_v1.search(db, args.question, args.limit, api, on=date.today())
                 return {"collection": lex_v1.COLLECTION, "hits": hits}
-            from backend.services.search.search_service import SearchService
-
-            return await evaluate(db, args, api, SearchService())
+            return await evaluate(db, args, api, baseline_service())
     finally:
         db.close()
 
