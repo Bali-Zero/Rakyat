@@ -72,6 +72,8 @@ def _digest(doc: dict) -> str:
     # Added on 2026-11-27; pinned whole by test_hospitality_licences_2026_11_27.py.
     doc["services"]["company_services"].pop("SLS — Villa & Boutique Accommodation", None)
     doc["services"]["company_services"].pop("SLS — Hotel & Resort", None)
+    # Added on 2026-11-28; pinned whole by test_tax_catalogue_2026_11_28.py.
+    doc["services"]["tax_accounting"].pop("standalone_services", None)
     blob = json.dumps(doc, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
@@ -84,7 +86,7 @@ def test_changed_rows_carry_the_ruled_price_and_attestation() -> None:
     assert dissolving["price"] == "13.000.000 IDR"
     assert onshore["verified_on"] == "2026-11-18"
     assert dissolving["verified_on"] == "2026-11-18"
-    assert doc["metadata"]["last_updated"] == "2026-11-27"
+    assert doc["metadata"]["last_updated"] == "2026-11-28"
 
 
 def test_the_new_row_is_exactly_the_ruled_row() -> None:

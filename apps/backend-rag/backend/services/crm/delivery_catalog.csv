@@ -58,6 +58,7 @@ other_passport_5yr,Passport 5 Years,service_delivered,,Issued passport identity 
 other_reset_molina,Reset Molina,service_delivered,,Molina account recovery or record correction confirmation · redacted,,,,,
 other_skck,SKCK,service_delivered,,Issued SKCK,,,,,
 other_sktt,SKTT,service_delivered,,Issued SKTT,,,,,
+tax_abt_registration,Groundwater Tax (ABT) Registration,service_delivered,,Issued ABT registration for [registered site],,,,,
 tax_annual_company,Annual Tax Company (SPT Badan),service_delivered,,Filed SPT Tahunan,Bukti Penerimaan Elektronik (BPE),,,,
 tax_annual_company_zero,Annual Company ZERO,service_delivered,,Annual financial report,,,,,
 tax_annual_personal,Annual Tax Personal (SPT OP),service_delivered,,Filed SPT Tahunan,Bukti Penerimaan Elektronik (BPE),,,,
@@ -70,19 +71,42 @@ tax_annual_reporting,Annual Tax Reporting,service_delivered,,Filed SPT Tahunan,B
 tax_bpjs_employee,BPJS Employee (Tenaga Kerja),service_delivered,,BPJS Ketenagakerjaan registration confirmation · per covered registration,,,,,
 tax_bpjs_insurance,BPJS Insurance (Kesehatan),service_delivered,,BPJS Kesehatan registration confirmation or membership card · per beneficiary,,,,,
 tax_close_pma_company,Close PMA Company,service_delivered,,Final dissolution deed,Corporate deregistration confirmation,Tax deregistration confirmation,Licensing deregistration confirmation,,
+tax_coretax_activation_company,Coretax Activation — Company,service_delivered,,Coretax activation confirmation · redacted,,,,,
+tax_coretax_activation_personal,Coretax Activation — Personal,service_delivered,,Coretax activation confirmation · redacted,,,,,
 tax_efin_application,EFIN Application,service_delivered,,EFIN issuance confirmation · masked,,,,,
+tax_kpp_accompaniment,Tax Office (KPP) Accompaniment,service_delivered,,Tax office visit record or receipt,,,,,
 tax_lkpm_yearly,LKPM Yearly Report,service_delivered,,LKPM report · per commissioned period,OSS filing acknowledgement · per commissioned period,,,,
+tax_meeting,Tax Meeting,service_delivered,,Meeting summary,,,,,
 tax_monthly_basic_0_50,Monthly Tax Report — 0 to 50 transactions (without LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,,,,
+tax_monthly_basic_100_150,Monthly Tax Report — 100 to 150 transactions (without LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,,,,
 tax_monthly_basic_100_200,Monthly Tax Report — 100 to 200 transactions (without LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,,,,
+tax_monthly_basic_150_200,Monthly Tax Report — 150 to 200 transactions (without LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,,,,
+tax_monthly_basic_200_250,Monthly Tax Report — 200 to 250 transactions (without LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,,,,
 tax_monthly_basic_200_plus,Monthly Tax Report — more than 200 transactions (without LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,,,,
+tax_monthly_basic_250_300,Monthly Tax Report — 250 to 300 transactions (without LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,,,,
+tax_monthly_basic_300_350,Monthly Tax Report — 300 to 350 transactions (without LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,,,,
+tax_monthly_basic_350_400,Monthly Tax Report — 350 to 400 transactions (without LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,,,,
+tax_monthly_basic_400_plus,Monthly Tax Report — 400 or more transactions (without LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,,,,
 tax_monthly_basic_50_100,Monthly Tax Report — 50 to 100 transactions (without LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,,,,
+tax_monthly_billing_bpjs_ks,Monthly Billing — BPJS Kesehatan,service_delivered,,BPJS Kesehatan payment receipt · per month billed,,,,,
+tax_monthly_billing_bpjs_tk,Monthly Billing — BPJS Ketenagakerjaan,service_delivered,,BPJS Ketenagakerjaan payment receipt · per month billed,,,,,
+tax_monthly_billing_npwpd,Monthly Billing — NPWPD,service_delivered,,Regional tax payment receipt · per month billed,,,,,
 tax_monthly_bundled_0_50,Monthly Tax Report — 0 to 50 transactions (incl. LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,LKPM report · if due,OSS acknowledgement · if due,Annual report · if due,Annual BPE · if filing is due
+tax_monthly_bundled_100_150,Monthly Tax Report — 100 to 150 transactions (incl. LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,LKPM report · if due,OSS acknowledgement · if due,Annual report · if due,Annual BPE · if filing is due
 tax_monthly_bundled_100_200,Monthly Tax Report — 100 to 200 transactions (incl. LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,LKPM report · if due,OSS acknowledgement · if due,Annual report · if due,Annual BPE · if filing is due
+tax_monthly_bundled_150_200,Monthly Tax Report — 150 to 200 transactions (incl. LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,LKPM report · if due,OSS acknowledgement · if due,Annual report · if due,Annual BPE · if filing is due
+tax_monthly_bundled_200_250,Monthly Tax Report — 200 to 250 transactions (incl. LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,LKPM report · if due,OSS acknowledgement · if due,Annual report · if due,Annual BPE · if filing is due
 tax_monthly_bundled_200_plus,Monthly Tax Report — more than 200 transactions (incl. LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,LKPM report · if due,OSS acknowledgement · if due,Annual report · if due,Annual BPE · if filing is due
+tax_monthly_bundled_250_300,Monthly Tax Report — 250 to 300 transactions (incl. LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,LKPM report · if due,OSS acknowledgement · if due,Annual report · if due,Annual BPE · if filing is due
+tax_monthly_bundled_300_350,Monthly Tax Report — 300 to 350 transactions (incl. LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,LKPM report · if due,OSS acknowledgement · if due,Annual report · if due,Annual BPE · if filing is due
+tax_monthly_bundled_350_400,Monthly Tax Report — 350 to 400 transactions (incl. LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,LKPM report · if due,OSS acknowledgement · if due,Annual report · if due,Annual BPE · if filing is due
+tax_monthly_bundled_400_plus,Monthly Tax Report — 400 or more transactions (incl. LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,LKPM report · if due,OSS acknowledgement · if due,Annual report · if due,Annual BPE · if filing is due
 tax_monthly_bundled_50_100,Monthly Tax Report — 50 to 100 transactions (incl. LKPM & Annual),service_delivered,,Monthly tax report,[Filing name] receipt · per filing due for this month,LKPM report · if due,OSS acknowledgement · if due,Annual report · if due,Annual BPE · if filing is due
-tax_npwp_personal_coretax,NPWP Personal + Coretax Activation,service_delivered,,Personal NPWP,Coretax activation confirmation · redacted,,,,
+tax_npwp_personal_coretax,NPWP Personal + Coretax Activation (with KITAS),service_delivered,,Personal NPWP,Coretax activation confirmation · redacted,,,,
+tax_npwp_personal_no_kitas,NPWP Personal + Coretax Activation (without KITAS),service_delivered,,Personal NPWP,Coretax activation confirmation · redacted,,,,
 tax_npwpd_registration,NPWPD Registration,service_delivered,,Issued NPWPD for [registered site],,,,,
 tax_registration,Tax Registration (NPWP),service_delivered,,NPWP registration confirmation or taxpayer card,,,,,
+tax_sertel,Electronic Certificate (SERTEL),service_delivered,,Electronic certificate (SERTEL) issuance confirmation · masked,,,,,
 tax_update_data_coretax,Update Data / Coretax Activation,service_delivered,,Coretax change or activation confirmation · redacted,,,,,
 visa_b1_voa,B1 - VOA,electronic_visa_issued,2,Electronic Visa (e-VOA) · if issued online,ITK — Visit Stay Permit · after entry; official immigration endorsement if issued at the border,Airport handover confirmation · if booked,,,
 visa_bridging,Bridging Visa,service_delivered,,Issued bridging stay permit (Izin Tinggal Peralihan),,,,,

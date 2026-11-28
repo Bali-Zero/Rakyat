@@ -61,7 +61,30 @@ CODE_TO_SHEET_LABEL: dict[str, str] = {
     "visa_c1_tourism": "C1 Tourism",
     "visa_c2_business": "C2 Business",
     "visa_c18_work_trial": "C18 Work Trial",
+    # Renamed "(with KITAS)" in practice_types on 2026-11-28 when the "(without KITAS)" service was
+    # added; the public list keeps one NPWP row, which is the with-KITAS one at the same price.
+    "tax_npwp_personal_coretax": "NPWP Personal + Coretax Activation",
 }
+
+#: The monthly tax report has nine BONUS bands per family but the public list keeps four price bands
+#: (2026-11-28). Every new band code is a bonus band OF a list band and carries that band's price, so it
+#: resolves to the list band that contains it: 100-150 and 150-200 to "100 to 200", 200-250 and above to
+#: "more than 200". A band price that drifts from its list band is then red, as for any other service.
+_LIST_BAND_OF_NEW_MONTHLY_BAND = {
+    "100_150": "100 to 200",
+    "150_200": "100 to 200",
+    "200_250": "more than 200",
+    "250_300": "more than 200",
+    "300_350": "more than 200",
+    "350_400": "more than 200",
+    "400_plus": "more than 200",
+}
+_MONTHLY_FAMILY_SUFFIX = {"basic": "without LKPM & Annual", "bundled": "including LKPM & Annual"}
+for _family, _suffix in _MONTHLY_FAMILY_SUFFIX.items():
+    for _band, _list_band in _LIST_BAND_OF_NEW_MONTHLY_BAND.items():
+        CODE_TO_SHEET_LABEL[f"tax_monthly_{_family}_{_band}"] = (
+            f"Monthly Tax Report \u2014 {_list_band} transactions ({_suffix})"
+        )
 
 #: Priced rows that reconcile against NOTHING, each with the reason. This is a
 #: declared hole, not a silent one: a new unmatched row is a FAILURE until
