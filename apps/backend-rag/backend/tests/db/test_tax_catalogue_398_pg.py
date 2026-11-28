@@ -12,6 +12,7 @@ import pytest
 
 from backend.db.migration_base import split_migration_sql
 from backend.services.crm.delivery_catalog import delivery_policy
+from backend.services.invoicing.entities import PRACTICE_TYPE_ENTITY_KEYS
 from backend.tests.services.pricing.test_tax_catalogue_398_release_order import MIGRATION
 from backend.tests.services.pricing.test_tax_catalogue_2026_11_28 import (
     NEW_BANDS,
@@ -101,6 +102,35 @@ async def test_the_new_services_have_the_ruled_price_category_and_a_delivery_slo
     )
     assert renamed["name"] == "NPWP Personal + Coretax Activation (with KITAS)"
     assert int(renamed["base_price"]) == 1000000
+
+
+@pytest.mark.asyncio
+async def test_after_398_every_practice_type_it_activates_has_slots_an_issuer_and_a_rate(
+    db_tx,
+) -> None:
+    """Read from the DATABASE, not from the oracle: what the picker will offer is what must be served."""
+    rows = await db_tx.fetch(
+        "SELECT code FROM practice_types WHERE is_active AND code = ANY($1::text[])",
+        [
+            *(f"tax_monthly_{f}_{b}" for f in ("basic", "bundled") for b in NEW_BANDS),
+            *NEW_SERVICES,
+        ],
+    )
+    codes = {r["code"] for r in rows}
+    assert len(codes) == 24
+    rates = await _rates(db_tx)
+    for code in sorted(codes):
+        assert delivery_policy(code) is not None, f"{code}: no delivery slots"
+        assert PRACTICE_TYPE_ENTITY_KEYS.get(code) == "permata_bali_nol_konsultan", code
+        assert code in rates, f"{code}: no bonus rate (a rate of 0 is a row, not a gap)"
+    # The four wide codes are inactive but still resolve: slots for their open practices, an issuer
+    # for their invoices, and no rate (the tax team moves each open practice to its exact band).
+    for code in WIDE_CODES:
+        row = await db_tx.fetchrow("SELECT is_active FROM practice_types WHERE code=$1", code)
+        assert row is not None and row["is_active"] is False, code
+        assert delivery_policy(code) is not None, code
+        assert PRACTICE_TYPE_ENTITY_KEYS.get(code) == "permata_bali_nol_konsultan", code
+        assert code not in rates, code
 
 
 @pytest.mark.asyncio
