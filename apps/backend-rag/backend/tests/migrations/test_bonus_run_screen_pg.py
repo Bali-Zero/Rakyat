@@ -9,13 +9,14 @@ import pytest
 from backend.app.services.hr import delivery_bonus as bonus
 from backend.app.services.hr.hr_service import bonus_payday, list_bonus_runs
 from backend.tests.migrations.test_bonus_run_month_lock_pg import _row
-from backend.tests.migrations.test_bonus_run_payment_pg import _run
+from backend.tests.migrations.test_bonus_run_payment_pg import _off_payroll, _run
 from backend.tests.migrations.test_delivery_bonus_events_pg import _freeze
 from backend.tests.migrations.test_hr_bonus_payroll_locks import _open_followup, env  # noqa: F401
 from backend.tests.migrations.test_migration_399_bonus_run_payment_pg import (
     DEC1,
     NOV,
     NOV1,
+    _emp_b,
     _today,
 )
 
@@ -48,6 +49,9 @@ async def _pay_nov_salary(env) -> None:  # noqa: ANN001
         result["period_id"],
         NOV_SALARY["paid_at"],
     )
+
+
+JAN1 = date(2027, 1, 1)
 
 
 def _dec_salary(paid_at: datetime) -> dict:
@@ -167,3 +171,89 @@ async def test_3b_a_postponed_run_bound_hold_stays_listed(env, monkeypatch) -> N
     assert [
         w["run_status"] for w in desk["awaiting_payment"]
     ] == []  # the held row is carried, not owed
+
+
+def test_1b_a_month_whose_own_salary_is_unpaid_waits_on_that_salary() -> None:
+    assert bonus_payday(NOV1, []) == (None, NOV1)
+    late = {**NOV_SALARY, "paid_at": datetime(2026, 12, 2, 1, 0, tzinfo=timezone.utc)}
+    assert bonus_payday(NOV1, [late]) == (date(2026, 12, 9), DEC1)  # paid after Nov ends: it counts
+
+
+@pytest.mark.asyncio
+async def test_2b_january_follows_december_and_a_closed_month_counts_its_carried_rows(
+    env,
+    monkeypatch,  # noqa: F811
+) -> None:
+    await _row(env, "approved", NOV)
+    emp_b = await _emp_b(env)
+    await env.pool.execute(
+        "INSERT INTO hr_bonus_ledger (employee_id, practice_type_code, amount_idr, status, awarded_at, "
+        "source, reason) VALUES ($1,'manual',70000,'approved',$2,'manual','why')",
+        emp_b,
+        NOV,
+    )
+    await _off_payroll(env, emp_b, True)
+    _today(monkeypatch, "2026-12-02")
+    await _run(env)
+    async with env.pool.acquire() as conn:
+        nov, _dec = await list_bonus_runs(conn, date(2026, 12, 2))
+    # the off-payroll row was deferred from November: the closed month's held figure is historical
+    assert (nov["approved_total_idr"], nov["held_count"], nov["held_total_idr"]) == (
+        100_000,
+        1,
+        70_000,
+    )
+    _today(monkeypatch, "2027-01-02")
+    await _run(env, DEC1)
+    async with env.pool.acquire() as conn:
+        _nov, dec, jan, feb = await list_bonus_runs(conn, date(2027, 2, 1))
+    assert (dec["status"], jan["can_approve"], feb["can_approve"]) == ("approved", True, False)
+
+
+@pytest.mark.asyncio
+async def test_4_the_desk_counts_a_held_row_nowhere_and_a_running_month_not_at_all(
+    env,
+    monkeypatch,  # noqa: F811
+) -> None:
+    await _desk_schema(env)
+    await _row(env, "approved", NOV)
+    _freeze(monkeypatch, "2026-11-28T04:00:00+00:00")
+    assert (await bonus.delivery_desk(env.pool, "tm-a"))["awaiting_payment"] == []  # Nov still runs
+    await _open_followup(env.pool, env.emp_id, date(2026, 10, 20))  # due 11-19: the row is held
+    _freeze(monkeypatch, "2026-12-03T04:00:00+00:00")
+    assert (await bonus.delivery_desk(env.pool, "tm-a"))["awaiting_payment"] == []
+    async with env.pool.acquire() as conn:
+        (nov, _dec) = await list_bonus_runs(conn, date(2026, 12, 3))
+    assert (nov["held_count"], nov["held_total_idr"], nov["approved_total_idr"]) == (1, 100_000, 0)
+
+
+@pytest.mark.asyncio
+async def test_5_a_carried_row_is_owed_once_on_the_desk_however_many_months_stay_open(
+    env,
+    monkeypatch,  # noqa: F811
+) -> None:
+    """Held at the November run, its hold lifts; December and January both end unapproved."""
+    await _desk_schema(env)
+    _today(monkeypatch, "2026-12-03")
+    practice = await _open_followup(env.pool, env.emp_id, date(2026, 10, 20))
+    carried = await _row(env, "approved", NOV)
+    await _run(env)
+    assert (
+        await env.pool.fetchval("SELECT deferred_from FROM hr_bonus_ledger WHERE id=$1", carried)
+        == NOV1
+    )
+    await env.pool.execute(
+        "UPDATE practice_visa_followups SET fulfilled_at = now() WHERE practice_id = $1", practice
+    )
+    _freeze(monkeypatch, "2027-02-02T04:00:00+00:00")
+    awaiting = (await bonus.delivery_desk(env.pool, "tm-a"))["awaiting_payment"]
+    assert [(w["bonus_month"], w["run_status"], w["amount_idr"]) for w in awaiting] == [
+        (DEC1, "open", 100_000)
+    ]
+    own_jan = await _row(env, "approved", datetime(2027, 1, 10, 4, 0, tzinfo=timezone.utc))
+    awaiting = (await bonus.delivery_desk(env.pool, "tm-a"))["awaiting_payment"]
+    assert [(w["bonus_month"], w["amount_idr"]) for w in awaiting] == [
+        (DEC1, 100_000),
+        (JAN1, 100_000),
+    ]  # January's own row is January's; the carried one stays December's
+    assert own_jan != carried

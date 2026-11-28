@@ -236,22 +236,28 @@ async def payroll_member(conn: asyncpg.Connection, member_id: str) -> asyncpg.Re
 
 
 async def _awaiting_payment(conn: asyncpg.Connection, emp_id: int, today: date) -> list[dict]:
-    """Ended bonus months (Nov 2026 on) whose run is not paid yet and that hold money of this employee."""
+    """Ended bonus months (Nov 2026 on) whose run is not paid yet and that hold money of this employee.
+
+    A row carried from an earlier run (deferred_from set) is an input of every later open month until a run
+    reserves it; it is owed once, so only the earliest open ended month counts it."""
     runs = {r["bonus_month"]: r["status"] for r in await conn.fetch("SELECT * FROM hr_bonus_runs")}
     periods = await paid_salary_periods(conn)
-    waiting, month = [], BONUS_RUN_FIRST_MONTH
+    waiting, month, carried_counted = [], BONUS_RUN_FIRST_MONTH, False
     while today >= _next_month(month):
         status = runs.get(month, "open")
         if status != "paid":
             if status == "open":
                 row = await conn.fetchrow(
-                    """SELECT COALESCE(sum(amount_idr) FILTER (WHERE status='approved' AND NOT held),0)::bigint AS amount,
-                              COALESCE(sum(amount_idr) FILTER (WHERE status='pending' AND NOT held),0)::bigint AS pending
-                       FROM hr_bonus_run_inputs($1::date, $2::date) WHERE employee_id=$3""",
+                    """SELECT COALESCE(sum(i.amount_idr) FILTER (WHERE i.status='approved' AND NOT i.held),0)::bigint AS amount,
+                              COALESCE(sum(i.amount_idr) FILTER (WHERE i.status='pending' AND NOT i.held),0)::bigint AS pending
+                       FROM hr_bonus_run_inputs($1::date, $2::date) i JOIN hr_bonus_ledger b ON b.id = i.bonus_id
+                       WHERE i.employee_id=$3 AND (NOT $4::boolean OR b.deferred_from IS NULL)""",
                     month,
                     today,
                     emp_id,
+                    carried_counted,
                 )
+                carried_counted = True
             else:
                 row = await conn.fetchrow(
                     """SELECT COALESCE(sum(amount_idr) FILTER (WHERE bonus_run_id=$1),0)::bigint AS amount,
