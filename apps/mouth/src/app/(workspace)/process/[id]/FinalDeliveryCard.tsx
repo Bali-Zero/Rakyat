@@ -66,6 +66,11 @@ function bonusInstruction(data: Delivery, kind: "upload" | "upload_or_waive") {
     : `The ${label} is required to record the bonus.`;
 }
 
+const withCompletion = (message: string) =>
+  /completed/i.test(message)
+    ? message
+    : `${message} The practice is completed.`;
+
 const actionStyle =
   "text-sm font-semibold text-[var(--bz-accent)] underline disabled:opacity-50";
 
@@ -207,11 +212,7 @@ function StaffDeliveryCard({
       const result = await request();
       await mutate(result, { revalidate: false });
       const completed = writable && result.status === "completed";
-      setFeedback(
-        completed && !/completed/i.test(message)
-          ? `${message} The practice is completed.`
-          : message,
-      );
+      setFeedback(completed ? withCompletion(message) : message);
       window.dispatchEvent(new Event("kita:delivery-changed"));
       setWaiveKey("");
       setWaiver("");
@@ -225,7 +226,8 @@ function StaffDeliveryCard({
       // A received error (409 and the like) is shown as it came. Only a LOST response is recovered.
       const refreshed = await mutate().catch(() => undefined);
       // A gateway error says nothing about the outcome: the refreshed state decides.
-      const gateway = e instanceof ApiError && [502, 503].includes(e.status);
+      const gateway =
+        e instanceof ApiError && [502, 503, 504].includes(e.status);
       if (
         e instanceof NotSent ||
         (e instanceof ApiError && !gateway) ||
@@ -233,12 +235,15 @@ function StaffDeliveryCard({
       ) {
         // nothing more to say
       } else if (refreshed && recovery.confirmed?.(refreshed)) {
+        const completed = writable && refreshed.status === "completed";
         setFailure("");
-        setFeedback(message);
+        setFeedback(completed ? withCompletion(message) : message);
         window.dispatchEvent(new Event("kita:delivery-changed"));
-        if (writable && refreshed.status === "completed") onComplete();
-      } else if (recovery.unconfirmed && !gateway) {
-        setFailure(recovery.unconfirmed);
+        if (completed) onComplete();
+      } else {
+        if (recovery.unconfirmed && !gateway) setFailure(recovery.unconfirmed);
+        // Nothing is claimed, but the page header must follow a practice that did complete.
+        if (writable && refreshed?.status === "completed") onComplete();
       }
     } finally {
       pending.current = false;

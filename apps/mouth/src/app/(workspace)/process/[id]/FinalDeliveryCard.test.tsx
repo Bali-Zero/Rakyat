@@ -95,6 +95,7 @@ describe("Final delivery", () => {
   beforeEach(() => {
     vi.resetAllMocks();
     requests.sentSub = "staff-a";
+    requests.identity = { sub: "staff-a", epoch: 1 };
     requests.get.mockResolvedValue(initial);
   });
   it("describes an unconfigured service without offering a futile retry", async () => {
@@ -1274,6 +1275,83 @@ describe("Final delivery", () => {
         ),
       );
       cleanup();
+      // Escalate: the official email goes out from a completed practice.
+      requests.post.mockReset();
+      requests.get.mockResolvedValue(
+        delivered({
+          visa_followup: {
+            ...followup,
+            status: "escalation_due",
+            can_postpone: false,
+            can_escalate: true,
+          },
+        }),
+      );
+      requests.post.mockResolvedValueOnce({
+        ...followup,
+        status: "email_sent_permit_due",
+        can_postpone: false,
+        can_escalate: false,
+        email_sent_at: "2026-09-30T05:04:00Z",
+      });
+      const escalate = setup();
+      await escalate.user.click(
+        await screen.findByRole("button", {
+          name: "Prepare official email to Zero",
+        }),
+      );
+      await escalate.user.type(
+        screen.getByLabelText("Note to Zero about the missing permit"),
+        "Arrival evidence is outstanding.",
+      );
+      await escalate.user.click(
+        screen.getByRole("button", { name: "Confirm and send email to Zero" }),
+      );
+      expect(
+        await screen.findByText(/Official email to Zero sent/),
+      ).toBeVisible();
+      expect(requests.post).toHaveBeenCalledWith(
+        base + "/visa-followup/escalate",
+        { note: "Arrival evidence is outstanding." },
+      );
+      cleanup();
+      // Confirm: the owner records an existing ambiguous send by its reference.
+      requests.post.mockReset();
+      const uncertain = {
+        ...followup,
+        status: "email_uncertain",
+        can_postpone: false,
+        can_escalate: false,
+        can_confirm_receipt: true,
+      };
+      requests.get.mockResolvedValue(delivered({ visa_followup: uncertain }));
+      requests.post.mockResolvedValueOnce({
+        ...uncertain,
+        status: "email_sent_permit_due",
+        can_confirm_receipt: false,
+      });
+      const confirm = setup();
+      await confirm.user.click(
+        await screen.findByRole("button", {
+          name: "Record receipt of the existing email",
+        }),
+      );
+      await confirm.user.type(
+        screen.getByLabelText(
+          "Mailbox Message-ID or Brevo reference for the received email",
+        ),
+        "receipt-ref-7",
+      );
+      await confirm.user.click(
+        screen.getByRole("button", { name: "Confirm existing email receipt" }),
+      );
+      await waitFor(() =>
+        expect(requests.post).toHaveBeenCalledWith(
+          base + "/visa-followup/confirm-receipt",
+          { reference: "receipt-ref-7" },
+        ),
+      );
+      cleanup();
       requests.get.mockResolvedValue(delivered());
       setup("paid", false); // a viewer still gets no action
       await screen.findByText("View-only access");
@@ -1461,6 +1539,145 @@ describe("Final delivery", () => {
       );
       expect(await screen.findByText("Bad gateway")).toBeVisible();
       expect(screen.queryByText(/could not confirm/)).toBeNull();
+    });
+    it.each([502, 503, 504])(
+      "a %i after Complete that the refreshed state shows completed confirms it and calls onComplete once",
+      async (status) => {
+        const proven = {
+          ...initial,
+          proof_ready: true,
+          slots: [
+            slot("electronic_visa", "Electronic Visa", { document_id: 21 }),
+            requiredSlots[1],
+          ],
+        };
+        requests.get
+          .mockResolvedValueOnce(proven)
+          .mockResolvedValue({ ...proven, status: "completed" });
+        requests.post.mockRejectedValue(new ApiError("Gateway", status));
+        const { user, complete } = setup();
+        await user.click(
+          await screen.findByRole("button", { name: "Complete practice" }),
+        );
+        expect(
+          await screen.findByText(
+            "Final documents delivered. Practice completed.",
+          ),
+        ).toBeVisible();
+        expect(complete).toHaveBeenCalledOnce();
+        expect(screen.queryByRole("alert")).toBeNull();
+      },
+    );
+    it("names the bonus slot, not the first filled one, as the proof", async () => {
+      const proven = {
+        ...initial,
+        proof_ready: true,
+        slots: [
+          slot("itk", "ITK — Visit Stay Permit", { document_id: 5 }),
+          slot("electronic_visa", "Electronic Visa", { document_id: 6 }),
+          slot("document_3", "Insurance"),
+        ],
+      };
+      requests.get.mockResolvedValue(proven);
+      setup();
+      expect(
+        await screen.findByText(
+          "The first proof completes the practice: E-visa",
+        ),
+      ).toBeVisible();
+    });
+    it("keeps the follow-up actions on a completed practice that is not delivered", async () => {
+      requests.get.mockResolvedValue(
+        delivered({ delivery_recorded: false, bonus_event: null }),
+      );
+      requests.post.mockResolvedValue({ ...followup, can_postpone: false });
+      const { user } = setup();
+      await user.click(
+        await screen.findByRole("button", { name: /Client has not entered/ }),
+      );
+      await user.type(
+        screen.getByLabelText("Private staff note about the client’s entry"),
+        "Client is abroad.",
+      );
+      await user.click(
+        screen.getByRole("button", { name: /Confirm postponement/ }),
+      );
+      await waitFor(() =>
+        expect(requests.post).toHaveBeenCalledWith(
+          base + "/visa-followup/postpone",
+          { note: "Client is abroad." },
+        ),
+      );
+    });
+    it.each([
+      ["a lost response", new Error("network lost")],
+      ["a 502", new ApiError("Bad gateway", 502)],
+    ])(
+      "after %s on a first-proof upload that the refreshed state shows completed, the card follows without claiming success",
+      async (_name, failure) => {
+        requests.get
+          .mockResolvedValueOnce({ ...initial, proof_ready: false })
+          .mockResolvedValue({
+            ...initial,
+            status: "completed",
+            delivery_recorded: true,
+            slots: [
+              slot("electronic_visa", "Electronic Visa", { document_id: 21 }),
+              slot("itk", "ITK — Visit Stay Permit", { can_repair: true }),
+            ],
+          });
+        requests.post.mockRejectedValue(failure);
+        const { user, complete } = setup();
+        fireEvent.change(
+          await screen.findByLabelText("Electronic Visa issue date"),
+          { target: { value: workDayOf() } },
+        );
+        await user.upload(
+          screen.getByLabelText("Upload E-visa"),
+          new File(["issued"], "visa.pdf", { type: "application/pdf" }),
+        );
+        await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+        expect(screen.queryByText(/upload recorded/)).toBeNull();
+        expect(screen.queryByText(/practice is completed/i)).toBeNull();
+      },
+    );
+    it("says the practice is completed after a recovered waiver completed it", async () => {
+      const onshore = {
+        ...initial,
+        slots: [
+          slot("electronic_visa", "Electronic Visa", {
+            condition: "if issued online",
+          }),
+          slot("document_2", "e-ITAS", { document_id: 3 }),
+        ],
+      };
+      requests.get.mockResolvedValueOnce(onshore).mockResolvedValue({
+        ...onshore,
+        status: "completed",
+        slots: [
+          slot("electronic_visa", "Electronic Visa", {
+            condition: "if issued online",
+            waiver_reason: "Not on this route",
+          }),
+          onshore.slots[1],
+        ],
+      });
+      requests.post.mockRejectedValue(new Error("network lost"));
+      const { user, complete } = setup();
+      await user.click(
+        await screen.findByRole("button", { name: "Mark as not applicable" }),
+      );
+      await user.type(
+        screen.getByLabelText("Reason this requirement does not apply"),
+        "Not on this route",
+      );
+      await user.click(screen.getByRole("button", { name: "Save reason" }));
+      expect(
+        await screen.findByText(
+          "Requirement updated. The practice is completed.",
+        ),
+      ).toBeVisible();
+      expect(complete).toHaveBeenCalledOnce();
     });
     it("shows the completed state and calls onComplete once when an upload was the first proof", async () => {
       requests.get.mockResolvedValue({ ...initial, proof_ready: false });
