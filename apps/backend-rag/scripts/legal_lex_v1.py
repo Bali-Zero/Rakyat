@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 from datetime import date
 from pathlib import Path
@@ -31,7 +32,7 @@ def voyage_client() -> httpx.AsyncClient:
         secret = settings.voyage_api_key
         key = secret.get_secret_value() if secret else ""
     if not key:
-        raise ValueError("no Voyage API key configured")
+        raise lex_v1.LexError("no Voyage API key configured")
     return httpx.AsyncClient(
         base_url=BASE_URL,
         headers={"Authorization": "Bearer " + key},
@@ -64,7 +65,7 @@ def load_cases(path: Path, sha256: str) -> list[dict]:
     data = load_json(path, sha256)
     cases = data.get("cases") if isinstance(data, dict) else None
     if not isinstance(cases, list) or not cases:
-        raise ValueError("cases file must be an object with a non-empty 'cases' list")
+        raise lex_v1.LexError("cases file must be an object with a non-empty 'cases' list")
     for n, case in enumerate(cases, 1):
         ok = (
             isinstance(case, dict)
@@ -79,7 +80,7 @@ def load_cases(path: Path, sha256: str) -> list[dict]:
             )
         )
         if not ok:
-            raise ValueError(f"cases file: case {n} has an unexpected shape")
+            raise lex_v1.LexError(f"cases file: case {n} has an unexpected shape")
     return cases
 
 
@@ -89,7 +90,7 @@ def load_supersedes(path: Path, sha256: str) -> dict[str, list[str]]:
         isinstance(k, str) and isinstance(v, list) and all(isinstance(x, str) for x in v)
         for k, v in data.items()
     ):
-        raise ValueError("supersedes file must map canonical id to a list of old ids")
+        raise lex_v1.LexError("supersedes file must map canonical id to a list of old ids")
     return data
 
 
@@ -156,11 +157,68 @@ def baseline_service():
     return service
 
 
-async def baseline_hits(service, question: str, k: int, level: int) -> list[dict]:
-    result = await service.search_with_reranking(
+class BaselineFailure(Exception):
+    """The baseline search failed; the eval must stop, never score the case as recall 0."""
+
+    def __init__(self, case_id: str, kind: str):
+        super().__init__(kind)
+        self.case_id, self.kind = case_id, kind
+
+
+def hybrid_enabled() -> bool:
+    from backend.app.core.config import settings
+
+    return bool(getattr(settings, "enable_hybrid_search", False))
+
+
+def baseline_branch(service) -> str:
+    """Same branch as VectorSearchTool (agentic/tools.py:183-205), minus the plain-search fallback."""
+    if hybrid_enabled() and hasattr(service, "hybrid_search_with_reranking"):
+        return "hybrid_search_with_reranking"
+    return "search_with_reranking"
+
+
+async def baseline_hits(service, branch: str, question: str, k: int, level: int) -> list:
+    result = await getattr(service, branch)(
         query=question, user_level=level, limit=k, collection_override=BASELINE_COLLECTION
     )
+    if not isinstance(result, dict) or "error" in result:
+        raise BaselineFailure("", "SearchError")
     return result.get("results", [])
+
+
+PASAL_IN_TEXT = re.compile(r"Pasal\s+([0-9]+[A-Za-z]{0,3})")
+
+
+def hit_identity(chunk, mapping: dict[str, str], sources: dict) -> tuple[str, str | None]:
+    """Canonical document id and pasal of a baseline hit, counting which field supplied each."""
+    meta = (chunk.get("metadata") or {}) if isinstance(chunk, dict) else {}
+    raw = ""
+    for field in ("document_id", "chapter_id", "id"):
+        if meta.get(field):
+            raw = str(meta[field])
+            sources["id"][field] += 1
+            break
+    else:
+        sources["id"]["none"] += 1
+    pasal = None
+    for field in ("pasal", "pasal_number"):
+        if meta.get(field) not in (None, ""):
+            pasal = str(meta[field])
+            sources["pasal"][field] += 1
+            break
+    else:
+        found = (
+            PASAL_IN_TEXT.search((chunk.get("text") or "")[:300])
+            if isinstance(chunk, dict)
+            else None
+        )
+        if found:
+            pasal = found.group(1)
+            sources["pasal"]["text"] += 1
+        else:
+            sources["pasal"]["none"] += 1
+    return mapping.get(raw, raw), pasal
 
 
 async def evaluate(db: QdrantClient, args, api: httpx.AsyncClient, service) -> dict:
@@ -168,18 +226,32 @@ async def evaluate(db: QdrantClient, args, api: httpx.AsyncClient, service) -> d
     mapping = {}
     if args.supersedes:
         mapping = old_to_canonical(load_supersedes(args.supersedes, args.supersedes_sha256))
+    branch = baseline_branch(service)
+    sources = {
+        "id": dict.fromkeys(("document_id", "chapter_id", "id", "none"), 0),
+        "pasal": dict.fromkeys(("pasal", "pasal_number", "text", "none"), 0),
+    }
     today, rows = date.today(), []
     for case in cases:
         found = await lex_v1.search(db, case["question"], args.k, api, on=today)
         new_ids = {h["metadata"]["document_id"] for h in found}
-        new_loc = {(h["metadata"]["document_id"], str(h["metadata"].get("pasal"))) for h in found}
+        new_loc = {
+            (h["metadata"]["document_id"], str(h["metadata"]["pasal"]))
+            for h in found
+            if h["metadata"].get("pasal") is not None
+        }
         old_ids, old_loc = set(), set()
-        for chunk in await baseline_hits(service, case["question"], args.k, args.user_level):
-            meta = chunk.get("metadata", {}) if isinstance(chunk, dict) else {}
-            raw = meta.get("chapter_id") or meta.get("document_id") or meta.get("id", "")
-            canonical = mapping.get(raw, raw)
+        try:
+            chunks = await baseline_hits(service, branch, case["question"], args.k, args.user_level)
+        except BaselineFailure as error:
+            raise BaselineFailure(case["id"], error.kind) from None
+        except Exception as error:
+            raise BaselineFailure(case["id"], type(error).__name__) from None
+        for chunk in chunks:
+            canonical, pasal = hit_identity(chunk, mapping, sources)
             old_ids.add(canonical)
-            old_loc.add((canonical, str(meta.get("pasal"))))
+            if pasal is not None:
+                old_loc.add((canonical, pasal))
         rows.append(
             {
                 "id": case["id"],
@@ -190,6 +262,8 @@ async def evaluate(db: QdrantClient, args, api: httpx.AsyncClient, service) -> d
         )
     return {
         "k": args.k,
+        "baseline_branch": branch,
+        "baseline_field_sources": sources,
         "rows": rows,
         "lex_v1": aggregate(rows, "lex_v1"),
         "legal_unified": aggregate(rows, "legal_unified"),
@@ -227,9 +301,12 @@ def parser() -> argparse.ArgumentParser:
 
 async def run(args) -> dict:
     if args.command == "eval" and bool(args.supersedes) != bool(args.supersedes_sha256):
-        raise ValueError("--supersedes and --supersedes-sha256 go together")
+        raise lex_v1.LexError("--supersedes and --supersedes-sha256 go together")
     release = lex_v1.Release.load(args.chunks, args.sha256) if args.command == "build" else None
-    db = open_database(args.local_dir, args.remote)
+    try:
+        db = open_database(args.local_dir, args.remote)
+    except ValueError as error:
+        raise lex_v1.LexError(str(error)) from error
     try:
         if args.command == "status":
             return status(db)
@@ -253,7 +330,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     try:
         result = asyncio.run(run(args))
-    except ValueError as error:
+    except BaselineFailure as error:
+        print(json.dumps({"error": error.kind, "case": error.case_id}))
+        return 1
+    except lex_v1.LexError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
     except Exception as error:

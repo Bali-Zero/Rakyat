@@ -23,6 +23,11 @@ from qdrant_client import QdrantClient, models
 from backend.services.rag.voyage_public import DIMENSIONS, embed
 from backend.services.rag.voyage_shadow import LegalSparseV1
 
+
+class LexError(ValueError):
+    """Every refusal this module raises; its message is safe to print."""
+
+
 COLLECTION = "legal_lex_v1"
 DENSE = "voyage4_large_dense"
 SPARSE = "legal_bm25_v1"
@@ -31,6 +36,7 @@ MAX_TEXT = 4500
 MAX_FILE = 256 * 1024 * 1024
 BATCH_TEXTS = 64
 BATCH_TOKENS = 100_000
+CHARS_PER_TOKEN = 2
 TRIES = 6
 BACKOFF_SECONDS = 1.0
 STATUSES = ("berlaku", "diubah")
@@ -60,11 +66,11 @@ def read_pinned(path: Path, sha256: str) -> bytes:
         while block := stream.read(1 << 20):
             size += len(block)
             if size > MAX_FILE:
-                raise ValueError("file exceeds the size limit")
+                raise LexError("file exceeds the size limit")
             digest.update(block)
             parts.append(block)
     if not hmac.compare_digest(digest.hexdigest(), sha256.lower()):
-        raise ValueError("file checksum mismatch")
+        raise LexError("file checksum mismatch")
     return b"".join(parts)
 
 
@@ -79,10 +85,10 @@ def _is_date(value: Any) -> bool:
 
 
 def check_record(record: Any, line: int) -> None:
-    """Raise ValueError naming the line and the failed check; never echoes record text."""
+    """Raise LexError naming the line and the failed check; never echoes record text."""
 
-    def bad(why: str) -> ValueError:
-        return ValueError(f"line {line}: {why}")
+    def bad(why: str) -> LexError:
+        return LexError(f"line {line}: {why}")
 
     if not isinstance(record, dict) or set(record) != FIELDS:
         raise bad("fields differ from the record schema")
@@ -110,6 +116,8 @@ def check_record(record: Any, line: int) -> None:
         raise bad("text length out of bounds")
     if not text.startswith(header + "\n"):
         raise bad("text does not start with its header")
+    if not text[len(header) + 1 :].strip():
+        raise bad("text has no body")
     if record["body_sha256"] != _sha(text[len(header) + 1 :]):
         raise bad("body_sha256 mismatch")
     if record["id"] != str(
@@ -120,6 +128,8 @@ def check_record(record: Any, line: int) -> None:
         raise bad("official_url is not https")
     if record["status"] not in STATUSES:
         raise bad("status is not accepted")
+    if not _is_date(record["valid_from"]):
+        raise bad("valid_from is not an ISO date")
     if record["valid_to"] is not None and not _is_date(record["valid_to"]):
         raise bad("valid_to is not an ISO date")
 
@@ -139,15 +149,15 @@ class Release:
             try:
                 record = json.loads(line)
             except ValueError as error:
-                raise ValueError(f"line {number}: not JSON") from error
+                raise LexError(f"line {number}: not JSON") from error
             check_record(record, number)
             if record["id"] in ids or record["chunk_key"] in keys:
-                raise ValueError(f"line {number}: duplicate id or chunk_key")
+                raise LexError(f"line {number}: duplicate id or chunk_key")
             ids.add(record["id"])
             keys.add(record["chunk_key"])
             records.append(record)
         if not records:
-            raise ValueError("no records")
+            raise LexError("no records")
         return cls(sha256.lower(), tuple(records))
 
     def marker(self, kind: str) -> dict[str, Any]:
@@ -176,10 +186,10 @@ class Release:
 
 def ensure_collection(db: QdrantClient, create: bool) -> None:
     if any(alias.alias_name == COLLECTION for alias in db.get_aliases().aliases):
-        raise ValueError("collection name is an alias")
+        raise LexError("collection name is an alias")
     if not db.collection_exists(COLLECTION):
         if not create:
-            raise ValueError("collection does not exist")
+            raise LexError("collection does not exist")
         db.create_collection(
             COLLECTION,
             vectors_config={
@@ -189,7 +199,7 @@ def ensure_collection(db: QdrantClient, create: bool) -> None:
         )
     params = db.get_collection(COLLECTION).config.params
     if not isinstance(params.vectors, dict) or set(params.vectors) != {DENSE}:
-        raise ValueError("incompatible dense vector names")
+        raise LexError("incompatible dense vector names")
     dense, sparse = params.vectors[DENSE], params.sparse_vectors or {}
     if (
         dense.size != DIMENSIONS
@@ -199,9 +209,11 @@ def ensure_collection(db: QdrantClient, create: bool) -> None:
         or set(sparse) != {SPARSE}
         or sparse[SPARSE].modifier != models.Modifier.IDF
     ):
-        raise ValueError("incompatible vector configuration")
-    if not create:
-        return
+        raise LexError("incompatible vector configuration")
+
+
+def ensure_indexes(db: QdrantClient) -> None:
+    """Create the payload indexes; call only once the collection is verified to be ours."""
     have = db.get_collection(COLLECTION).payload_schema or {}
     for field in INDEXED:
         if field not in have:
@@ -220,7 +232,7 @@ def read_marker(db: QdrantClient, release: Release | None, number: int) -> dict 
         return None
     kind = "build" if number == 1 else "ready"
     if release is not None and rows[0].payload != release.marker(kind):
-        raise ValueError("foreign release marker")
+        raise LexError("foreign release marker")
     return rows[0].payload
 
 
@@ -228,7 +240,7 @@ def batches(records: tuple[dict, ...]) -> list[list[dict]]:
     """Split into groups of at most BATCH_TEXTS texts and BATCH_TOKENS estimated tokens."""
     out, current, tokens = [], [], 0
     for record in records:
-        cost = len(record["text"]) / 3
+        cost = len(record["text"]) / CHARS_PER_TOKEN
         if current and (len(current) >= BATCH_TEXTS or tokens + cost > BATCH_TOKENS):
             out.append(current)
             current, tokens = [], 0
@@ -251,6 +263,19 @@ async def embed_retry(api: httpx.AsyncClient, texts: list[str], *, documents: bo
     raise AssertionError("unreachable")
 
 
+async def embed_split(api: httpx.AsyncClient, records: list[dict]) -> list:
+    """Embed documents; on an HTTP 400 for several texts, halve the group and retry each half."""
+    try:
+        return await embed_retry(api, [r["text"] for r in records], documents=True)
+    except httpx.HTTPStatusError as error:
+        if error.response.status_code != 400:
+            raise
+        if len(records) == 1:
+            raise LexError(f"voyage refused chunk {records[0]['chunk_key']}") from error
+    middle = len(records) // 2
+    return [*await embed_split(api, records[:middle]), *await embed_split(api, records[middle:])]
+
+
 def _sparse(tokenizer: LegalSparseV1, text: str) -> models.SparseVector | None:
     sparse = tokenizer.generate_sparse_vector(text)
     return models.SparseVector(**sparse) if sparse["indices"] else None
@@ -261,12 +286,13 @@ async def write_release(db: QdrantClient, release: Release, api: httpx.AsyncClie
     ensure_collection(db, create=True)
     if read_marker(db, release, 1) is None:
         if db.count(COLLECTION, exact=True).count:
-            raise ValueError("nonempty collection without this release's build marker")
+            raise LexError("nonempty collection without this release's build marker")
         db.upsert(
             COLLECTION,
             [models.PointStruct(id=1, vector={}, payload=release.marker("build"))],
             wait=True,
         )
+    ensure_indexes(db)
     ready = read_marker(db, release, 0) is not None
     tokenizer, added = LegalSparseV1(), 0
     for group in batches(release.records):
@@ -282,12 +308,12 @@ async def write_release(db: QdrantClient, release: Release, api: httpx.AsyncClie
             if existing is None:
                 missing.append(record)
             elif existing.payload != release.payload(record):
-                raise ValueError("persisted payload disagrees with the pinned release")
+                raise LexError("persisted payload disagrees with the pinned release")
         if not missing:
             continue
         if ready:
-            raise ValueError("published collection is incomplete")
-        vectors = await embed_retry(api, [r["text"] for r in missing], documents=True)
+            raise LexError("published collection is incomplete")
+        vectors = await embed_split(api, missing)
         points = []
         for record, vector in zip(missing, vectors, strict=True):
             named: dict[str, Any] = {DENSE: list(vector)}
@@ -301,7 +327,7 @@ async def write_release(db: QdrantClient, release: Release, api: httpx.AsyncClie
         added += len(points)
     count = db.count(COLLECTION, exact=True).count
     if count != len(release.records) + (2 if ready else 1):
-        raise ValueError("unexpected points in collection")
+        raise LexError("unexpected points in collection")
     if not ready:
         db.upsert(
             COLLECTION,
@@ -326,15 +352,16 @@ async def search(
     db: QdrantClient, question: str, limit: int, api: httpx.AsyncClient, *, on: date
 ) -> list[dict]:
     if not 0 < limit <= 100:
-        raise ValueError("limit must be from 1 to 100")
+        raise LexError("limit must be from 1 to 100")
     ensure_collection(db, create=False)
     ready = read_marker(db, None, 0)
     if ready is None or ready.get("kind") != "ready" or ready.get("contract") != CONTRACT:
-        raise ValueError("collection is not ready")
+        raise LexError("collection is not ready")
     (vector,) = await embed_retry(api, [question], documents=False)
     dense = list(vector)
     sparse = LegalSparseV1().generate_query_sparse_vector(question)
     where = eligible(on)
+    kind = "LEX_V1_RRF" if sparse["indices"] else "LEX_V1_DENSE"
     if sparse["indices"]:
         request: dict[str, Any] = {
             "prefetch": [
@@ -355,7 +382,7 @@ async def search(
             "text": (hit.payload or {}).get("text", ""),
             "metadata": {k: v for k, v in (hit.payload or {}).items() if k != "text"},
             "score": hit.score,
-            "score_kind": "LEX_V1_RRF",
+            "score_kind": kind,
         }
         for hit in hits
     ]
@@ -366,6 +393,7 @@ __all__ = [
     "CONTRACT",
     "DENSE",
     "SPARSE",
+    "LexError",
     "Release",
     "ensure_collection",
     "search",

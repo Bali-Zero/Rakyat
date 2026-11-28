@@ -14,6 +14,7 @@ from qdrant_client import QdrantClient, models
 
 from backend.services.rag import lex_v1 as lex
 from backend.services.rag.voyage_public import BASE_URL, DIMENSIONS
+from backend.services.rag.voyage_shadow import LegalSparseV1
 from scripts import legal_lex_v1 as cli
 
 ON = date(2026, 11, 28)
@@ -91,7 +92,7 @@ def basic():
     ]
 
 
-def fake_voyage(seen=None, failures=()):
+def fake_voyage(seen=None, failures=(), reject=None, sizes=None):
     queue = list(failures)
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -100,6 +101,10 @@ def fake_voyage(seen=None, failures=()):
         if queue:
             return httpx.Response(queue.pop(0))
         body = json.loads(request.content)
+        if sizes is not None:
+            sizes.append(len(body["input"]))
+        if reject is not None and (status := reject(body["input"])):
+            return httpx.Response(status)
         data = []
         for i, text in enumerate(body["input"]):
             vector = [0.0] * DIMENSIONS
@@ -108,6 +113,62 @@ def fake_voyage(seen=None, failures=()):
         return httpx.Response(200, json={"model": body["model"], "data": data})
 
     return httpx.AsyncClient(base_url=BASE_URL, transport=httpx.MockTransport(handler))
+
+
+FORBIDDEN = {
+    "recreate_collection",
+    "upload_points",
+    "upload_collection",
+    "batch_update_points",
+    "overwrite_payload",
+    "set_payload",
+    "delete",
+    "delete_collection",
+    "delete_vectors",
+    "delete_payload",
+    "update_collection_aliases",
+    "clear_payload",
+}
+WRITES = (
+    "upsert",
+    "create_",
+    "update_",
+    "set_",
+    "delete",
+    "clear",
+    "upload_",
+    "batch_",
+    "overwrite",
+)
+
+
+class Recorder:
+    """Wraps a local client and records every method call."""
+
+    def __init__(self, inner):
+        self.inner = inner
+        self.calls = []
+
+    def __getattr__(self, name):
+        target = getattr(self.inner, name)
+        if not callable(target):
+            return target
+
+        def call(*args, **kwargs):
+            self.calls.append((name, args, kwargs))
+            return target(*args, **kwargs)
+
+        return call
+
+    def names(self):
+        return [c[0] for c in self.calls]
+
+    def written_collections(self):
+        return {
+            (a[0] if a else kw.get("collection_name"))
+            for name, a, kw in self.calls
+            if name.startswith(WRITES)
+        }
 
 
 @pytest.fixture
@@ -127,10 +188,11 @@ def test_rebuild_writes_zero(db, tmp_path):
     release, added = build(db, tmp_path)
     assert added == 3
     assert db.count(lex.COLLECTION, exact=True).count == 5
-    embedded = []
+    embedded, recorder = [], Recorder(db)
     api = fake_voyage(embedded)
-    assert asyncio.run(lex.write_release(db, release, api)) == 0
+    assert asyncio.run(lex.write_release(recorder, release, api)) == 0
     assert embedded == []
+    assert "upsert" not in recorder.names()
     assert db.count(lex.COLLECTION, exact=True).count == 5
 
 
@@ -139,7 +201,7 @@ def test_changed_byte_refused(db, tmp_path):
     raw = bytearray(path.read_bytes())
     raw[10] ^= 1
     path.write_bytes(bytes(raw))
-    with pytest.raises(ValueError, match="checksum"):
+    with pytest.raises(lex.LexError, match="checksum"):
         lex.Release.load(path, digest)
     assert not db.collection_exists(lex.COLLECTION)
 
@@ -152,7 +214,7 @@ def test_foreign_nonempty_refused(db, tmp_path):
         wait=True,
     )
     path, digest = write_chunks(tmp_path, basic())
-    with pytest.raises(ValueError, match="build marker"):
+    with pytest.raises(lex.LexError, match="build marker"):
         asyncio.run(lex.write_release(db, lex.Release.load(path, digest), fake_voyage()))
     assert db.count(lex.COLLECTION, exact=True).count == 1
 
@@ -169,29 +231,9 @@ def test_alias_refused(db, tmp_path):
         ]
     )
     path, digest = write_chunks(tmp_path, basic())
-    with pytest.raises(ValueError, match="alias"):
+    with pytest.raises(lex.LexError, match="alias"):
         asyncio.run(lex.write_release(db, lex.Release.load(path, digest), fake_voyage()))
     assert db.count("elsewhere").count == 0
-
-
-def test_build_touches_only_legal_lex_v1(db, tmp_path):
-    touched = set()
-
-    class Recording:
-        def __getattr__(self, name):
-            target = getattr(db, name)
-            if name.startswith(("upsert", "create_", "update_", "set_", "delete", "clear")):
-
-                def call(collection, *a, **kw):
-                    touched.add(collection)
-                    return target(collection, *a, **kw)
-
-                return call
-            return target
-
-    path, digest = write_chunks(tmp_path, basic())
-    asyncio.run(lex.write_release(Recording(), lex.Release.load(path, digest), fake_voyage()))
-    assert touched == {"legal_lex_v1"}
 
 
 def search(db, question, limit=8, api=None):
@@ -243,13 +285,14 @@ def test_payload_is_citable(db, tmp_path):
 
 def test_search_refused_until_ready(db):
     lex.ensure_collection(db, create=True)
-    with pytest.raises(ValueError, match="not ready"):
+    with pytest.raises(lex.LexError, match="not ready"):
         search(db, "pajak")
 
 
 def test_dense_only_query_without_sparse_terms(db, tmp_path):
     build(db, tmp_path)
-    assert len(search(db, "?!")) == 3
+    hits = search(db, "?!")
+    assert len(hits) == 3 and {h["score_kind"] for h in hits} == {"LEX_V1_DENSE"}
 
 
 def run_cli(monkeypatch, capsys, argv, env=None):
@@ -311,85 +354,11 @@ def test_cli_help_lists_commands():
     assert all(c in done.stdout for c in ("build", "status", "query", "eval"))
 
 
-def mutate(**changes):
-    def apply(rec):
-        rec.update(changes)
-        return rec
-
-    return apply
-
-
-def drop(name):
-    def apply(rec):
-        del rec[name]
-        return rec
-
-    return apply
-
-
-def retext(text):
-    def apply(rec):
-        rec["text"] = text
-        return reseal(rec)
-
-    return apply
-
-
-REFUSALS = {
-    "missing_field": drop("bab"),
-    "extra_field": mutate(surprise=1),
-    "seq_type": mutate(seq="0"),
-    "list_type": mutate(amended_by="x"),
-    "key_segments": mutate(chunk_key="UU-1-2020#body#1"),
-    "key_canonical": mutate(chunk_key="OTHER#body#1#0000"),
-    "key_pasal_disagrees": mutate(chunk_key="UU-1-2020#body#7#0000"),
-    "key_part_disagrees": mutate(chunk_key="UU-1-2020#lampiran#2#0000"),
-    "key_seq_disagrees": mutate(chunk_key="UU-1-2020#body#2#0003"),
-    "key_seq_unpadded": mutate(chunk_key="UU-1-2020#body#2#0"),
-    "bad_id": mutate(id=str(uuid.uuid4())),
-    "bad_body_sha": mutate(body_sha256="0" * 64),
-    "no_header": retext("no header here"),
-    "empty_body": retext("[UU 1/2020 · Judul · Pasal 1]\n"[:-1]),
-    "too_long": retext("[UU 1/2020 · Judul · Pasal 1]\n" + "a" * lex.MAX_TEXT),
-    "http_url": mutate(official_url="http://x.example/a"),
-    "dicabut": mutate(status="dicabut"),
-    "valid_to": mutate(valid_to="31/12/2020"),
-    "valid_to_impossible": mutate(valid_to="2020-02-31"),
-}
-
-
-@pytest.mark.parametrize("name", sorted(REFUSALS))
-def test_record_refusals_write_nothing(db, tmp_path, name):
-    records = basic()
-    records[1] = REFUSALS[name](dict(records[1]))
-    path, digest = write_chunks(tmp_path, records)
-    with pytest.raises(ValueError, match="line 2"):
-        lex.Release.load(path, digest)
-    assert not db.collection_exists(lex.COLLECTION)
-
-
-def test_duplicate_ids_refused(tmp_path):
-    path, digest = write_chunks(tmp_path, [basic()[0], basic()[0]])
-    with pytest.raises(ValueError, match="duplicate"):
-        lex.Release.load(path, digest)
-
-
 def test_oversize_file_refused(tmp_path, monkeypatch):
     path, digest = write_chunks(tmp_path, basic())
     monkeypatch.setattr(lex, "MAX_FILE", 10)
-    with pytest.raises(ValueError, match="size"):
+    with pytest.raises(lex.LexError, match="size"):
         lex.Release.load(path, digest)
-
-
-def test_batches_respect_text_and_token_limits(monkeypatch):
-    monkeypatch.setattr(lex, "BATCH_TOKENS", 20_000)
-    many = [record(canonical=f"UU-{i}-2020", pasal=str(i), body="x" * 30) for i in range(150)]
-    sizes = [len(b) for b in lex.batches(tuple(many))]
-    assert sizes == [64, 64, 22]
-    big = [record(canonical=f"UU-{i}-2020", pasal=str(i), body="y" * 4000) for i in range(60)]
-    groups = lex.batches(tuple(big))
-    assert all(sum(len(r["text"]) for r in g) / 3 <= 20_000 for g in groups)
-    assert len(groups) > 1 and sum(len(g) for g in groups) == 60
 
 
 def test_backoff_retries_once_on_429_then_succeeds(db, tmp_path, monkeypatch):
@@ -551,3 +520,591 @@ def test_eval_supersedes_other_shapes_refused(tmp_path):
     path.write_text(json.dumps({"A": "old"}))
     with pytest.raises(ValueError):
         cli.load_supersedes(path, hashlib.sha256(path.read_bytes()).hexdigest())
+
+
+@pytest.fixture(autouse=True)
+def no_hybrid(monkeypatch):
+    monkeypatch.setattr(cli, "hybrid_enabled", lambda: False)
+
+
+def run_write(db, release, api=None):
+    return asyncio.run(lex.write_release(db, release, api or fake_voyage()))
+
+
+def load(tmp_path, records, name="chunks.jsonl"):
+    path, digest = write_chunks(tmp_path, records, name)
+    return lex.Release.load(path, digest), digest
+
+
+def test_build_touches_only_legal_lex_v1_and_never_deletes(db, tmp_path):
+    release, _ = load(tmp_path, basic())
+    recorder = Recorder(db)
+    run_write(recorder, release)
+    run_write(recorder, release)
+    search(recorder, basic()[0]["text"])
+    assert recorder.written_collections() == {"legal_lex_v1"}
+    assert FORBIDDEN.isdisjoint(recorder.names())
+
+
+def test_foreign_compatible_collection_gets_no_index_and_no_write(db, tmp_path):
+    lex.ensure_collection(db, create=True)
+    db.upsert(
+        lex.COLLECTION,
+        [models.PointStruct(id=5, vector={lex.DENSE: [1.0] + [0.0] * 1023}, payload={"kind": "x"})],
+        wait=True,
+    )
+    release, _ = load(tmp_path, basic())
+    recorder = Recorder(db)
+    with pytest.raises(lex.LexError, match="build marker"):
+        run_write(recorder, release)
+    assert "create_payload_index" not in recorder.names()
+    assert "upsert" not in recorder.names()
+
+
+def test_absent_collection_is_created_and_indexed(db, tmp_path):
+    release, _ = load(tmp_path, basic())
+    recorder = Recorder(db)
+    run_write(recorder, release)
+    indexed = {kw["field_name"] for n, _, kw in recorder.calls if n == "create_payload_index"}
+    assert indexed == {*lex.INDEXED, "valid_to"}
+    assert recorder.names().count("create_collection") == 1
+
+
+def test_markers_and_chunks_carry_the_pinned_release(db, tmp_path):
+    release, digest = load(tmp_path, basic())
+    run_write(db, release)
+    rows, _ = db.scroll(lex.COLLECTION, limit=50, with_payload=True)
+    chunks = [r.payload for r in rows if r.payload["kind"] == "chunk"]
+    markers = {r.id: r.payload for r in rows if r.payload["kind"] != "chunk"}
+    assert len(chunks) == 3 and {c["release"] for c in chunks} == {digest}
+    assert markers[1]["release"] == markers[0]["release"] == digest
+    assert markers[1]["kind"] == "build" and markers[0]["kind"] == "ready"
+    assert markers[0]["chunk_count"] == 3 and markers[0]["contract"] == lex.CONTRACT
+
+
+def test_build_marker_of_another_release_refused(db, tmp_path):
+    first, _ = load(tmp_path, basic())
+    run_write(db, first)
+    other, _ = load(tmp_path, [record("UU-7-2020", "7", 0, "Ketentuan lain.")], "other.jsonl")
+    with pytest.raises(lex.LexError, match="foreign release marker"):
+        run_write(db, other)
+    assert db.count(lex.COLLECTION, exact=True).count == 5
+
+
+def test_persisted_payload_difference_refused(db, tmp_path):
+    release, _ = load(tmp_path, basic())
+    run_write(db, release)
+    db.set_payload(lex.COLLECTION, {"text": "tampered"}, points=[basic()[1]["id"]])
+    with pytest.raises(lex.LexError, match="persisted payload disagrees"):
+        run_write(db, release)
+
+
+def test_published_collection_missing_a_chunk_refused(db, tmp_path):
+    release, _ = load(tmp_path, basic())
+    run_write(db, release)
+    db.delete(lex.COLLECTION, points_selector=[basic()[0]["id"]])
+    with pytest.raises(lex.LexError, match="published collection is incomplete"):
+        run_write(db, release)
+
+
+def test_unexpected_extra_point_fails_the_final_count(db, tmp_path):
+    release, _ = load(tmp_path, basic())
+    lex.ensure_collection(db, create=True)
+    db.upsert(
+        lex.COLLECTION,
+        [
+            models.PointStruct(id=1, vector={}, payload=release.marker("build")),
+            models.PointStruct(id=9, vector={lex.DENSE: [1.0] + [0.0] * 1023}, payload={"k": 1}),
+        ],
+        wait=True,
+    )
+    with pytest.raises(lex.LexError, match="unexpected points"):
+        run_write(db, release)
+    assert db.retrieve(lex.COLLECTION, [0]) == []
+
+
+def test_search_refuses_a_ready_marker_of_another_contract(db, tmp_path):
+    release, _ = load(tmp_path, basic())
+    run_write(db, release)
+    db.set_payload(lex.COLLECTION, {"contract": "something/else"}, points=[0])
+    with pytest.raises(lex.LexError, match="not ready"):
+        search(db, "pajak")
+
+
+def edit(**changes):
+    def apply(rec):
+        rec.update(changes)
+        return reseal(rec)
+
+    return apply
+
+
+def body_of(rec, body):
+    rec["text"] = rec["header"] + "\n" + body
+    return reseal(rec)
+
+
+def drop(name):
+    def apply(rec):
+        del rec[name]
+        return rec
+
+    return apply
+
+
+REFUSALS = {
+    "fields: missing": (drop("bab"), "fields differ"),
+    "fields: extra": (edit(surprise=1), "fields differ"),
+    "str: citation": (edit(citation=5), "citation is not a string"),
+    "str: text": (lambda r: {**r, "text": 5}, "text is not a string"),
+    "optstr: bab": (edit(bab=5), "bab has the wrong type"),
+    "optstr: pasal": (edit(pasal=5), "pasal has the wrong type"),
+    "valid_from: none": (edit(valid_from=None), "valid_from has the wrong type"),
+    "valid_from: format": (edit(valid_from="2020/01/01"), "valid_from is not an ISO date"),
+    "valid_to: format": (edit(valid_to="31-12-2020"), "valid_to is not an ISO date"),
+    "valid_to: impossible": (edit(valid_to="2020-02-31"), "valid_to is not an ISO date"),
+    "valid_to: type": (edit(valid_to=2020), "valid_to has the wrong type"),
+    "optint: page_from": (edit(page_from="3"), "page_from has the wrong type"),
+    "optint: page_to bool": (edit(page_to=True), "page_to has the wrong type"),
+    "int: tahun": (edit(tahun="2020"), "tahun is not an integer"),
+    "int: seq bool": (edit(seq=False), "seq is not an integer"),
+    "list: type": (edit(amended_by="x"), "amended_by is not a list"),
+    "list: element": (edit(repealed_by=[1]), "repealed_by is not a list"),
+    "key: too few segments": (edit(chunk_key="UU-2-2021#body#2"), "chunk_key disagrees"),
+    "key: canonical": (edit(chunk_key="OTHER#body#2#0000"), "chunk_key disagrees"),
+    "key: part": (edit(chunk_key="PP-2-2021#lampiran#2#0000"), "chunk_key disagrees"),
+    "key: pasal": (edit(chunk_key="PP-2-2021#body#7#0000"), "chunk_key disagrees"),
+    "key: seq value": (edit(chunk_key="PP-2-2021#body#2#0003"), "chunk_key disagrees"),
+    "key: seq unpadded": (edit(chunk_key="PP-2-2021#body#2#0"), "chunk_key disagrees"),
+    "id": (lambda r: {**r, "id": str(uuid.uuid4())}, "id mismatch"),
+    "body_sha256": (lambda r: {**r, "body_sha256": "0" * 64}, "body_sha256 mismatch"),
+    "no header": (edit(text="plain text without the header"), "does not start with its header"),
+    "too long": (lambda r: body_of(r, "a" * lex.MAX_TEXT), "text length out of bounds"),
+    "empty text": (lambda r: {**r, "text": ""}, "text length out of bounds"),
+    "empty body": (lambda r: body_of(r, ""), "text has no body"),
+    "blank body": (lambda r: body_of(r, "   \n"), "text has no body"),
+    "http url": (edit(official_url="http://x.example/a"), "official_url is not https"),
+    "dicabut": (edit(status="dicabut"), "status is not accepted"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(REFUSALS))
+def test_record_refusals_name_their_reason(tmp_path, name):
+    mutator, reason = REFUSALS[name]
+    records = basic()
+    records[1] = mutator(dict(records[1]))
+    path, digest = write_chunks(tmp_path, records)
+    with pytest.raises(lex.LexError, match=f"^line 2: .*{reason}"):
+        lex.Release.load(path, digest)
+
+
+def test_max_text_boundary_is_accepted(tmp_path):
+    rec = record("UU-4-2020", "4")
+    rec = body_of(rec, "b" * (lex.MAX_TEXT - len(rec["header"]) - 1))
+    assert len(rec["text"]) == lex.MAX_TEXT
+    path, digest = write_chunks(tmp_path, [rec])
+    assert len(lex.Release.load(path, digest).records) == 1
+
+
+def test_duplicate_id_refused(tmp_path):
+    path, digest = write_chunks(tmp_path, [basic()[0], basic()[0]])
+    with pytest.raises(lex.LexError, match="line 2: duplicate id or chunk_key"):
+        lex.Release.load(path, digest)
+
+
+def test_duplicate_chunk_key_with_different_ids_refused(tmp_path):
+    first = basic()[0]
+    second = body_of(dict(first), "Isi yang berbeda sama sekali.")
+    assert second["id"] != first["id"] and second["chunk_key"] == first["chunk_key"]
+    path, digest = write_chunks(tmp_path, [first, second])
+    with pytest.raises(lex.LexError, match="line 2: duplicate id or chunk_key"):
+        lex.Release.load(path, digest)
+
+
+def test_not_json_and_empty_files_refused(tmp_path):
+    path = tmp_path / "x.jsonl"
+    path.write_text("{not json}\n")
+    with pytest.raises(lex.LexError, match="line 1: not JSON"):
+        lex.Release.load(path, hashlib.sha256(path.read_bytes()).hexdigest())
+    path.write_text("\n")
+    with pytest.raises(lex.LexError, match="no records"):
+        lex.Release.load(path, hashlib.sha256(path.read_bytes()).hexdigest())
+
+
+def guarded_cli(monkeypatch, capsys, tmp_path, argv):
+    opened = []
+    monkeypatch.setattr(cli, "open_database", lambda *a, **k: opened.append(a))
+    code = cli.main(argv)
+    return code, opened, capsys.readouterr()
+
+
+def test_cli_wrong_sha_never_opens_a_database(monkeypatch, capsys, tmp_path):
+    path, digest = write_chunks(tmp_path, basic())
+    store = tmp_path / "store"
+    argv = ["build", "--local-dir", str(store), "--chunks", str(path), "--sha256", "0" * 64]
+    code, opened, out = guarded_cli(monkeypatch, capsys, tmp_path, argv)
+    assert code != 0 and opened == [] and "checksum" in out.err
+    assert not store.exists()
+
+
+def test_cli_invalid_record_never_opens_a_database(monkeypatch, capsys, tmp_path):
+    records = basic()
+    records[2] = edit(status="dicabut")(dict(records[2]))
+    path, digest = write_chunks(tmp_path, records)
+    store = tmp_path / "store"
+    argv = ["build", "--local-dir", str(store), "--chunks", str(path), "--sha256", digest]
+    code, opened, out = guarded_cli(monkeypatch, capsys, tmp_path, argv)
+    assert code != 0 and opened == [] and "line 3" in out.err
+    assert not store.exists()
+
+
+def vec(*parts):
+    out = [0.0] * DIMENSIONS
+    for index, weight in parts:
+        out[index] += weight
+    return out
+
+
+def slot(text):
+    return int(sha(text)[:8], 16) % DIMENSIONS
+
+
+def plant(db, point_id, text, dense, **payload):
+    sparse = LegalSparseV1().generate_sparse_vector(text)
+    vectors = {lex.DENSE: dense}
+    if sparse["indices"]:
+        vectors[lex.SPARSE] = models.SparseVector(**sparse)
+    base = {
+        "kind": "chunk",
+        "text": text,
+        "status_vigensi": "berlaku",
+        "valid_to": None,
+        "document_id": str(point_id),
+        "title": "t",
+        "url": "https://x.example",
+        "retrieval_scope": "current",
+    }
+    db.upsert(
+        lex.COLLECTION,
+        [models.PointStruct(id=point_id, vector=vectors, payload={**base, **payload})],
+        wait=True,
+    )
+
+
+def ready_collection(db):
+    lex.ensure_collection(db, create=True)
+    marker = {"kind": "ready", "contract": lex.CONTRACT, "release": "x", "chunk_count": 0}
+    db.upsert(lex.COLLECTION, [models.PointStruct(id=0, vector={}, payload=marker)], wait=True)
+
+
+def flood_scenario(db):
+    """Nine excluded points identical to the query flood both candidate lists.
+
+    A is found only by the dense list and B only by the sparse list (five dense
+    fillers push B out of the dense top 6), so the right answer for limit 2 is {A, B}
+    and every one of the four filter sites matters.
+    """
+    query = "kuncirahasia pembayaran nomorunik"
+    q = slot(query)
+    ready_collection(db)
+    for n in range(3):
+        plant(db, 100 + n, query, vec((q, 1.0)), status_vigensi="dicabut")
+        plant(db, 110 + n, query, vec((q, 1.0)), valid_to="2020-01-01", status_vigensi="diubah")
+        plant(db, 120 + n, query, vec((q, 1.0)), kind="other")
+    plant(db, 1, "alfa beta gamma", vec((q, 0.9), (1000, 0.1)), document_id="A")
+    for n in range(5):
+        plant(
+            db,
+            10 + n,
+            f"delta{n} epsilon",
+            vec((q, 0.8 - 0.1 * n), (1001, 0.2)),
+            document_id=f"F{n}",
+        )
+    plant(db, 2, query + " tambahan", vec((1002, 1.0)), document_id="B")
+    return query
+
+
+def test_excluded_points_never_survive_any_filter_site(db):
+    query = flood_scenario(db)
+    hits = search(db, query, limit=2)
+    assert {h["metadata"]["document_id"] for h in hits} == {"A", "B"}
+    assert len(hits) == 2
+
+
+@pytest.mark.parametrize("site", ["dense_prefetch", "sparse_prefetch"])
+def test_each_filter_site_is_necessary(db, monkeypatch, site):
+    query = flood_scenario(db)
+    real = lex.models.Prefetch
+    seen = []
+
+    class Spy(real):
+        pass
+
+    # Strip the filter at exactly one site and the flood must show.
+    def strip_prefetch(**kw):
+        seen.append(kw["using"])
+        if (site == "dense_prefetch" and kw["using"] == lex.DENSE) or (
+            site == "sparse_prefetch" and kw["using"] == lex.SPARSE
+        ):
+            kw["filter"] = None
+        return real(**kw)
+
+    monkeypatch.setattr(lex.models, "Prefetch", strip_prefetch)
+    hits = search(db, query, limit=2)
+    assert {h["metadata"]["document_id"] for h in hits} != {"A", "B"} or len(hits) != 2
+
+
+def test_every_prefetch_and_the_fused_query_carry_the_same_filter(db):
+    query = flood_scenario(db)
+    recorder = Recorder(db)
+    search(recorder, query, limit=2)
+    (call,) = [c for c in recorder.calls if c[0] == "query_points"]
+    kwargs = call[2]
+    expected = lex.eligible(ON)
+    assert kwargs["query_filter"] == expected
+    assert [p.using for p in kwargs["prefetch"]] == [lex.DENSE, lex.SPARSE]
+    assert all(p.filter == expected for p in kwargs["prefetch"])
+    assert kwargs["limit"] == 2 and all(p.limit == 6 for p in kwargs["prefetch"])
+    must_not = {c.key for c in expected.must_not}
+    assert must_not == {"status_vigensi", "valid_to"} and expected.must[0].key == "kind"
+
+
+def test_dense_only_branch_excludes_dicabut_expired_and_non_chunks(db):
+    query = "?!"
+    q = slot(query)
+    assert LegalSparseV1().generate_query_sparse_vector(query)["indices"] == []
+    ready_collection(db)
+    plant(db, 100, "tua", vec((q, 1.0)), status_vigensi="dicabut")
+    plant(db, 101, "lewat", vec((q, 1.0)), valid_to="2020-01-01", status_vigensi="diubah")
+    plant(db, 102, "lain", vec((q, 1.0)), kind="other")
+    plant(db, 1, "satu", vec((q, 0.5), (1000, 0.5)), document_id="A")
+    plant(db, 2, "dua", vec((q, 0.4), (1001, 0.6)), document_id="B")
+    hits = search(db, query, limit=2)
+    assert [h["metadata"]["document_id"] for h in hits] == ["A", "B"]
+    assert {h["score_kind"] for h in hits} == {"LEX_V1_DENSE"}
+
+
+def test_valid_to_boundary_keeps_today_and_drops_yesterday(db, tmp_path):
+    keep = record(
+        "UU-6-2020", "6", 0, "Berlaku sampai hari ini.", status="diubah", valid_to="2026-11-28"
+    )
+    drop_ = record("UU-5-2020", "5", 0, "Berakhir kemarin.", status="diubah", valid_to="2026-11-27")
+    build(db, tmp_path, [keep, drop_, *basic()])
+    ids = {h["metadata"]["document_id"] for h in search(db, keep["text"], limit=10)}
+    assert "UU-6-2020" in ids and "UU-5-2020" not in ids
+
+
+def test_hybrid_label_and_limit_validation(db, tmp_path):
+    build(db, tmp_path)
+    assert {h["score_kind"] for h in search(db, basic()[0]["text"])} == {"LEX_V1_RRF"}
+    with pytest.raises(lex.LexError, match="limit"):
+        search(db, "pajak", limit=0)
+
+
+def test_real_sized_batches_respect_the_real_constants():
+    many = [body_of(record(f"UU-{i}-2020", str(i)), "x" * 4400) for i in range(150)]
+    assert all(len(r["text"]) > 4400 for r in many)
+    groups = lex.batches(tuple(many))
+    assert lex.BATCH_TEXTS == 64 and lex.BATCH_TOKENS == 100_000 and lex.CHARS_PER_TOKEN == 2
+    assert all(len(g) <= 64 for g in groups)
+    assert all(sum(len(r["text"]) for r in g) / 2 <= 100_000 for g in groups)
+    assert len(groups) > 3 and sum(len(g) for g in groups) == 150
+    small = [record(f"UU-{i}-2020", str(i), body="x") for i in range(150)]
+    assert [len(g) for g in lex.batches(tuple(small))] == [64, 64, 22]
+
+
+def test_http_400_halves_the_batch_until_it_fits(db, tmp_path):
+    sizes = []
+    api = fake_voyage(reject=lambda texts: 400 if len(texts) > 1 else None, sizes=sizes)
+    release, _ = load(tmp_path, basic())
+    assert run_write(db, release, api) == 3
+    assert sizes[0] == 3 and set(sizes[1:]) == {1, 2} and sizes.count(1) == 3
+
+
+def test_http_400_on_a_single_text_names_its_chunk(db, tmp_path):
+    release, _ = load(tmp_path, basic())
+    api = fake_voyage(reject=lambda texts: 400)
+    with pytest.raises(
+        lex.LexError,
+        match="voyage refused chunk PP-2-2021#body#2#0000|voyage refused chunk UU-1-2020#body#1#0000|voyage refused chunk PERMEN-3-2022#body#3#0000",
+    ):
+        run_write(db, release, api)
+
+
+def test_baseline_error_key_fails_the_eval_with_its_type(db, tmp_path):
+    build(db, tmp_path)
+    args, _ = eval_args(tmp_path, k=1)
+
+    class Service:
+        async def search_with_reranking(self, **kw):
+            return {"results": [], "error": "boom secret detail"}
+
+    with pytest.raises(cli.BaselineFailure) as caught:
+        asyncio.run(cli.evaluate(db, args, fake_voyage(), Service()))
+    assert (caught.value.kind, caught.value.case_id) == ("SearchError", "c1")
+
+
+def test_baseline_exception_fails_the_eval_with_its_type(db, tmp_path):
+    build(db, tmp_path)
+    args, _ = eval_args(tmp_path, k=1)
+
+    class Service:
+        async def search_with_reranking(self, **kw):
+            raise TimeoutError("x")
+
+    with pytest.raises(cli.BaselineFailure) as caught:
+        asyncio.run(cli.evaluate(db, args, fake_voyage(), Service()))
+    assert caught.value.kind == "TimeoutError"
+
+
+def eval_args(tmp_path, k=1):
+    case = {
+        "id": "c1",
+        "question": basic()[0]["text"],
+        "domain": "tax",
+        "ready_norms": ["UU-1-2020"],
+        "ready_pasal": [],
+    }
+    cpath = tmp_path / "cases.json"
+    cpath.write_text(json.dumps({"cases": [case]}))
+    digest = hashlib.sha256(cpath.read_bytes()).hexdigest()
+    return Namespace(
+        cases=cpath, sha256=digest, k=k, user_level=3, supersedes=None, supersedes_sha256=None
+    ), digest
+
+
+def test_cli_eval_exits_nonzero_with_json_error_on_baseline_failure(monkeypatch, capsys, tmp_path):
+    real = httpx.AsyncClient
+    mock = fake_voyage()
+    monkeypatch.setattr(
+        cli.httpx, "AsyncClient", lambda **kw: real(**{**kw, "transport": mock._transport})
+    )
+    monkeypatch.setenv("VOYAGE_API_KEY", SENTINEL)
+    path, digest = write_chunks(tmp_path, basic())
+    local = ["--local-dir", str(tmp_path / "s")]
+    assert cli.main(["build", *local, "--chunks", str(path), "--sha256", digest]) == 0
+    capsys.readouterr()
+    args, cdigest = eval_args(tmp_path)
+
+    class Service:
+        async def search_with_reranking(self, **kw):
+            return {"error": "x"}
+
+    monkeypatch.setattr(cli, "baseline_service", lambda: Service())
+    code = cli.main(["eval", *local, "--cases", str(args.cases), "--sha256", cdigest])
+    out = capsys.readouterr().out
+    assert code == 1 and json.loads(out) == {"error": "SearchError", "case": "c1"}
+
+
+@pytest.mark.parametrize(
+    ("enabled", "has_method", "expected"),
+    [
+        (True, True, "hybrid_search_with_reranking"),
+        (False, True, "search_with_reranking"),
+        (True, False, "search_with_reranking"),
+    ],
+)
+def test_baseline_follows_the_served_branch(
+    db, tmp_path, monkeypatch, enabled, has_method, expected
+):
+    build(db, tmp_path)
+    args, _ = eval_args(tmp_path, k=2)
+    calls = []
+
+    async def method(self, **kw):
+        calls.append(kw)
+        return {"results": []}
+
+    attrs = {"search_with_reranking": method}
+    if has_method:
+        attrs["hybrid_search_with_reranking"] = method
+    service = type("Service", (), attrs)()
+    monkeypatch.setattr(cli, "hybrid_enabled", lambda: enabled)
+    out = asyncio.run(cli.evaluate(db, args, fake_voyage(), service))
+    assert out["baseline_branch"] == expected
+    assert calls == [
+        {
+            "query": basic()[0]["text"],
+            "user_level": 3,
+            "limit": 2,
+            "collection_override": "legal_unified",
+        }
+    ]
+
+
+def sources():
+    return {
+        "id": dict.fromkeys(("document_id", "chapter_id", "id", "none"), 0),
+        "pasal": dict.fromkeys(("pasal", "pasal_number", "text", "none"), 0),
+    }
+
+
+def test_hit_identity_prefers_document_id_and_counts_sources():
+    src, mapping = sources(), {"old-1": "UU-1-2020"}
+    chunks = [
+        {"metadata": {"document_id": "old-1", "chapter_id": "BAB-1", "pasal": "5"}},
+        {"metadata": {"chapter_id": "old-1", "pasal_number": 7}},
+        {"metadata": {"id": "zzz"}, "text": "x" * 290 + " Pasal 8"},
+        {"metadata": {}, "text": "x" * 300 + " Pasal 9"},
+        {"metadata": {"document_id": "old-1"}, "text": "Pasal 56A tentang paspor"},
+    ]
+    got = [cli.hit_identity(c, mapping, src) for c in chunks]
+    assert got == [
+        ("UU-1-2020", "5"),
+        ("UU-1-2020", "7"),
+        ("zzz", "8"),
+        ("", None),
+        ("UU-1-2020", "56A"),
+    ]
+    assert src["id"] == {"document_id": 2, "chapter_id": 1, "id": 1, "none": 1}
+    assert src["pasal"] == {"pasal": 1, "pasal_number": 1, "text": 2, "none": 1}
+
+
+def test_eval_output_reports_field_sources(db, tmp_path):
+    build(db, tmp_path)
+    args, _ = eval_args(tmp_path)
+
+    class Service:
+        async def search_with_reranking(self, **kw):
+            return {"results": [{"metadata": {"document_id": "UU-1-2020"}, "text": "Pasal 3"}]}
+
+    out = asyncio.run(cli.evaluate(db, args, fake_voyage(), Service()))
+    assert out["baseline_field_sources"]["id"]["document_id"] == 1
+    assert out["baseline_field_sources"]["pasal"]["text"] == 1
+
+
+def test_lex_error_is_a_value_error():
+    assert issubclass(lex.LexError, ValueError)
+
+
+def test_cli_prints_only_the_type_for_foreign_exceptions(monkeypatch, capsys, tmp_path):
+    from pydantic import BaseModel, ValidationError
+
+    class Model(BaseModel):
+        number: int
+
+    async def boom(args):
+        try:
+            Model(number=SENTINEL)
+        except ValidationError:
+            raise
+
+    monkeypatch.setattr(cli, "run", boom)
+    code = cli.main(["status", "--local-dir", str(tmp_path / "s")])
+    err = capsys.readouterr().err
+    assert code == 1 and SENTINEL not in err and err.strip() == "error: ValidationError"
+
+    async def plain(args):
+        raise ValueError("private detail")
+
+    monkeypatch.setattr(cli, "run", plain)
+    code = cli.main(["status", "--local-dir", str(tmp_path / "s")])
+    err = capsys.readouterr().err
+    assert code == 1 and "private detail" not in err and "ValueError" in err
+
+    async def refusal(args):
+        raise lex.LexError("collection is not ready")
+
+    monkeypatch.setattr(cli, "run", refusal)
+    assert cli.main(["status", "--local-dir", str(tmp_path / "s")]) == 2
+    assert "collection is not ready" in capsys.readouterr().err
