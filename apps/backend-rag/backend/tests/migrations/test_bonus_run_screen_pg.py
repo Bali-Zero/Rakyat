@@ -232,28 +232,31 @@ async def test_5_a_carried_row_is_owed_once_on_the_desk_however_many_months_stay
     env,
     monkeypatch,  # noqa: F811
 ) -> None:
-    """Held at the November run, its hold lifts; December and January both end unapproved."""
+    """Held at the November run, its hold lifts; December and January both end unapproved.
+
+    An approved and a pending row are carried: each is owed once, under December."""
     await _desk_schema(env)
     _today(monkeypatch, "2026-12-03")
     practice = await _open_followup(env.pool, env.emp_id, date(2026, 10, 20))
     carried = await _row(env, "approved", NOV)
+    carried_pending = await _row(env, "pending", NOV)
     await _run(env)
-    assert (
-        await env.pool.fetchval("SELECT deferred_from FROM hr_bonus_ledger WHERE id=$1", carried)
-        == NOV1
-    )
+    assert await env.pool.fetchval(
+        "SELECT array_agg(deferred_from ORDER BY id) FROM hr_bonus_ledger WHERE id = ANY($1::bigint[])",
+        [carried, carried_pending],
+    ) == [NOV1, NOV1]
     await env.pool.execute(
         "UPDATE practice_visa_followups SET fulfilled_at = now() WHERE practice_id = $1", practice
     )
     _freeze(monkeypatch, "2027-02-02T04:00:00+00:00")
     awaiting = (await bonus.delivery_desk(env.pool, "tm-a"))["awaiting_payment"]
-    assert [(w["bonus_month"], w["run_status"], w["amount_idr"]) for w in awaiting] == [
-        (DEC1, "open", 100_000)
-    ]
+    assert [
+        (w["bonus_month"], w["run_status"], w["amount_idr"], w["pending_idr"]) for w in awaiting
+    ] == [(DEC1, "open", 100_000, 100_000)]
     own_jan = await _row(env, "approved", datetime(2027, 1, 10, 4, 0, tzinfo=timezone.utc))
     awaiting = (await bonus.delivery_desk(env.pool, "tm-a"))["awaiting_payment"]
-    assert [(w["bonus_month"], w["amount_idr"]) for w in awaiting] == [
-        (DEC1, 100_000),
-        (JAN1, 100_000),
-    ]  # January's own row is January's; the carried one stays December's
+    assert [(w["bonus_month"], w["amount_idr"], w["pending_idr"]) for w in awaiting] == [
+        (DEC1, 100_000, 100_000),
+        (JAN1, 100_000, 0),
+    ]  # January's own row is January's; the carried ones stay December's
     assert own_jan != carried
