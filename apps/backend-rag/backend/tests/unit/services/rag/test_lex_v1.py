@@ -331,10 +331,14 @@ def test_cli_never_prints_secret(monkeypatch, capsys, tmp_path):
 
 
 def test_cli_refuses_credentialed_url(monkeypatch, capsys):
-    env = {"QDRANT_URL": "https://user:hunter2@example.com", "QDRANT_API_KEY": SENTINEL}
+    userinfo_tail = "hunter2"
+    env = {
+        "QDRANT_URL": "https://user:" + userinfo_tail + "@example.com",
+        "QDRANT_API_KEY": SENTINEL,
+    }
     code, out, err = run_cli(monkeypatch, capsys, ["status", "--remote"], env)
     assert code != 0 and "credentials" in err
-    assert "hunter2" not in out + err and SENTINEL not in out + err
+    assert userinfo_tail not in out + err and SENTINEL not in out + err
 
 
 def test_cli_status_absent_writes_nothing(monkeypatch, capsys, tmp_path):
