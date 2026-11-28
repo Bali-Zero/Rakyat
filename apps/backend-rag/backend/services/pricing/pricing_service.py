@@ -120,7 +120,9 @@ _TOKEN_ALIASES: dict[str, tuple[str, ...]] = {
 
 # Rows renamed for display whose key stays, because /api/pricing/service looks a row up by
 # its exact key. The LLM price list prints keys, so these rows print their name instead.
-_KEY_KEPT_AFTER_RENAME = frozenset({"ERP (Exit Re-entry Permit)"})
+_KEY_KEPT_AFTER_RENAME = frozenset(
+    {"ERP (Exit Re-entry Permit)", "NPWP Personal + Coretax Activation"}
+)
 
 # A negator drops the single word after it ("non alcoholic", "minuman tanpa alkohol").
 _NEGATORS = frozenset({"non", "tanpa", "senza", "without"})
