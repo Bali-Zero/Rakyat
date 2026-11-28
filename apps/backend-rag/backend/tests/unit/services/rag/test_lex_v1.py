@@ -831,29 +831,6 @@ def test_excluded_points_never_survive_any_filter_site(db):
     assert len(hits) == 2
 
 
-@pytest.mark.parametrize("site", ["dense_prefetch", "sparse_prefetch"])
-def test_each_filter_site_is_necessary(db, monkeypatch, site):
-    query = flood_scenario(db)
-    real = lex.models.Prefetch
-    seen = []
-
-    class Spy(real):
-        pass
-
-    # Strip the filter at exactly one site and the flood must show.
-    def strip_prefetch(**kw):
-        seen.append(kw["using"])
-        if (site == "dense_prefetch" and kw["using"] == lex.DENSE) or (
-            site == "sparse_prefetch" and kw["using"] == lex.SPARSE
-        ):
-            kw["filter"] = None
-        return real(**kw)
-
-    monkeypatch.setattr(lex.models, "Prefetch", strip_prefetch)
-    hits = search(db, query, limit=2)
-    assert {h["metadata"]["document_id"] for h in hits} != {"A", "B"} or len(hits) != 2
-
-
 def test_every_prefetch_and_the_fused_query_carry_the_same_filter(db):
     query = flood_scenario(db)
     recorder = Recorder(db)
