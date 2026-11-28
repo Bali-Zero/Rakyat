@@ -35,18 +35,36 @@ def fresh_cursor(monkeypatch):
 async def test_a_waiver_refreshes_the_counts_after_it_commits(pool, monkeypatch):  # noqa: F811
     async with pool.acquire() as conn:
         await setup(conn, ONSHORE, ONSHORE)
-    refreshed = AsyncMock()
+    seen: list = []
+
+    async def committed_state(*args, **kwargs):
+        async with pool.acquire() as other:  # a second connection sees only committed rows
+            seen.append(
+                (
+                    await other.fetchval("SELECT status FROM practices WHERE id=$1", ONSHORE),
+                    await other.fetchval(
+                        "SELECT waiver_reason FROM practice_delivery_slots"
+                        " WHERE practice_id=$1 AND slot_key='electronic_visa'",
+                        ONSHORE,
+                    ),
+                )
+            )
+
+    refreshed = AsyncMock(side_effect=committed_state)
     monkeypatch.setattr(service, "invalidate_delivery_cache", refreshed)
     await service.upload(
         pool, ONSHORE, "document_2", STAFF, final_file("e-itas"), BackgroundTasks()
     )
     refreshed.reset_mock()
+    seen.clear()
     done = await service.waive(
         pool, ONSHORE, "electronic_visa", STAFF, "Not on this route", BackgroundTasks()
     )
     assert done["status"] == "completed"  # the waiver completed the practice
     refreshed.assert_awaited_once()
     assert refreshed.await_args.args[0]["id"] == ONSHORE
+    # The refresh ran after the commit: the other connection already saw the completion and the waiver.
+    assert seen == [("completed", "Not on this route")]
 
 
 @pytest.mark.asyncio
@@ -86,6 +104,21 @@ async def test_a_replay_that_changes_nothing_refreshes_nothing(pool, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_a_replay_into_an_open_practice_without_proof_queues_no_refresh(pool, monkeypatch):  # noqa: F811
+    itk = final_file("itk")
+    await service.upload(pool, 7, ITK, STAFF, itk, BackgroundTasks())  # saved, but no proof yet
+    refreshed = AsyncMock()
+    monkeypatch.setattr(service, "invalidate_delivery_cache", refreshed)
+    tasks = BackgroundTasks()
+    again = await service.upload(
+        pool, 7, ITK, STAFF, itk, tasks
+    )  # the exact file, an open practice
+    assert again["status"] == "on_process"  # finish_on_proof found no proof and returned None
+    assert tasks.tasks == []  # so no refresh was queued
+    refreshed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_the_sweep_refreshes_once_per_page_that_completed_something(pool, monkeypatch):  # noqa: F811
     async with pool.acquire() as conn:
         await old_visa_proof(conn, 7)
@@ -102,6 +135,71 @@ async def test_the_sweep_refreshes_once_per_page_that_completed_something(pool, 
     patterns.reset_mock()
     assert (await sweep.sweep_open_proofs(pool))["completed"] == []
     patterns.assert_not_awaited()  # a page that completed nothing refreshes nothing
+
+
+@pytest.mark.asyncio
+async def test_the_sweep_refreshes_only_after_its_page_has_committed(pool, monkeypatch):  # noqa: F811
+    async with pool.acquire() as conn:
+        await old_visa_proof(conn, 7)
+        await setup(conn, PMA, PMA)
+        await accept(conn, PMA, "document_1", NOV_2)
+    seen: list = []
+
+    async def committed_state(practices):
+        async with pool.acquire() as other:  # a second connection sees only committed rows
+            for p in practices:
+                seen.append(
+                    await other.fetchval("SELECT status FROM practices WHERE id=$1", p["id"])
+                )
+
+    monkeypatch.setattr(
+        service, "invalidate_delivery_caches", AsyncMock(side_effect=committed_state)
+    )
+    assert (await sweep.sweep_open_proofs(pool))["completed"] == [7, PMA]
+    assert seen == ["completed", "completed"]
+
+
+@pytest.mark.asyncio
+async def test_a_failing_sweep_refresh_neither_stops_the_notices_nor_undoes_the_completion(  # noqa: F811
+    pool,
+    monkeypatch,
+):
+    async with pool.acquire() as conn:
+        await old_visa_proof(conn, 7)
+    sent: list = []
+    monkeypatch.setattr(
+        service,
+        "queue_completed",
+        lambda pool, p, actor, tasks: tasks.add_task(sent.append, p["id"]),
+    )
+
+    async def broken(practices):
+        raise RuntimeError("cache down")
+
+    monkeypatch.setattr(service, "invalidate_delivery_caches", broken)
+    ticked = await sweep.sweep_open_proofs(pool)  # the tick still returns
+    assert ticked["completed"] == [7]
+    assert sent == [7]  # the notices ran after the failed refresh
+    async with pool.acquire() as conn:
+        assert await conn.fetchval("SELECT status FROM practices WHERE id=7") == "completed"
+
+
+@pytest.mark.asyncio
+async def test_invalidate_delivery_cache_clears_exactly_the_seven_patterns(monkeypatch):
+    cleared = AsyncMock()
+    monkeypatch.setattr(service, "invalidate_cache", cleared)
+    await service.invalidate_delivery_cache({"id": 5, "client_id": 9})
+    assert sorted(c.args[0] for c in cleared.await_args_list) == sorted(
+        [
+            "zantara:crm_practice:5:*",
+            "zantara:crm_practices:*",
+            "zantara:crm_practices_stats:*",
+            "zantara:crm_clients_stats:*",
+            "zantara:crm_practices_revenue_growth:*",
+            "zantara:hr_bonuses:*",
+            "zantara:portal_documents:9:*",
+        ]
+    )
 
 
 # ── F-b (i): the notices run strictly after the page commits ────────────────────
