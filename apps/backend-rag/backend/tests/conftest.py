@@ -342,8 +342,8 @@ async def _xdist_ensure_template_database(admin_dsn: str, base_db: str, template
         lock_key = f"xdist-template:{template_db}"
         await conn.execute("SELECT pg_advisory_lock(hashtext($1)::bigint)", lock_key)
         try:
-            already_built = await conn.fetchval(
-                "SELECT NOT datallowconn FROM pg_database WHERE datname = $1",
+            already_built = await conn.fetchval(  # -2: a drop was interrupted, rebuild it
+                "SELECT NOT datallowconn AND datconnlimit <> -2 FROM pg_database WHERE datname = $1",
                 template_db,
             )
             if already_built:
