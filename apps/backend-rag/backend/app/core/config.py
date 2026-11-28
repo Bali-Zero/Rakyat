@@ -163,6 +163,12 @@ class Settings(BaseSettings):
     # Set via SERVICE_CARDS_SEEDING_CODES.
     service_cards_seeding_codes: str = ""
 
+    # Reviewers of the service cards: each gets one email when a consultant asks a client for a
+    # document outside the card (spec BLOCK-1-VISA, V2). Comma-separated `address` or
+    # `address:lang`, lang `en` or `id` (default `id`). Empty = nobody is told; the request
+    # still succeeds. Set via SERVICE_CARD_REVIEWER_EMAILS; never write an address in code.
+    service_card_reviewer_emails: str = ""
+
     deepseek_api_key: str | None = Field(default=None, description="DeepSeek API Key")
     ollama_url: str = Field(
         default="http://localhost:11434",

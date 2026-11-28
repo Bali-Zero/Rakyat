@@ -32,9 +32,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import { ApiError } from "@/lib/api/error-handler";
 import { useRequiredDocuments } from "@/lib/hooks/useRequiredDocuments";
 import {
   RequiredDocument,
+  DocumentRequestCreate,
   DocumentStatus,
   DOCUMENT_TYPE_OPTIONS,
 } from "@/lib/types/required-documents";
@@ -88,117 +90,143 @@ const StatusBadge = memo(({ status }: { status: DocumentStatus }) => {
 });
 StatusBadge.displayName = "StatusBadge";
 
-// Add Document Modal
+// Ask for one more document
+const SUGGESTIONS = DOCUMENT_TYPE_OPTIONS.filter((o) => o.value !== "other");
+
+/** The message a failed request shows; a 409 is picked from `detail.code`. */
+function requestErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 409) {
+      const code = (err.data as { detail?: { code?: unknown } } | undefined)
+        ?.detail?.code;
+      if (code === "already_on_practice")
+        return "This document is already on this practice.";
+      if (code === "practice_closed")
+        return "This practice is closed: no document can be asked on it.";
+      return "This request conflicts with the practice as it is now.";
+    }
+    if (err.status === 403)
+      return "You do not have permission to ask for documents on this practice.";
+    if (err.status === 422)
+      return "Check the fields: one of them is empty or too long.";
+  }
+  return "The request could not be sent. Please try again.";
+}
+
 function AddDocumentModal({
   isOpen,
   onClose,
-  onAdd,
+  onRequest,
   isLoading,
 }: {
   isOpen: boolean;
   onClose: () => void;
-  onAdd: (data: {
-    document_type: string;
-    document_label: string;
-    description: string;
-    is_required: boolean;
-  }) => Promise<void>;
+  onRequest: (data: DocumentRequestCreate) => Promise<unknown>;
   isLoading: boolean;
 }) {
-  const [selectedType, setSelectedType] = useState("");
-  const [customLabel, setCustomLabel] = useState("");
-  const [description, setDescription] = useState("");
-  const [isRequired, setIsRequired] = useState(true);
+  const [name, setName] = useState("");
+  const [clientText, setClientText] = useState("");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
-  const selectedOption = DOCUMENT_TYPE_OPTIONS.find(
-    (o) => o.value === selectedType,
-  );
+  const trimmed = {
+    name: name.trim(),
+    text: clientText.trim(),
+    why: reason.trim(),
+  };
+  const ready = !!trimmed.name && !!trimmed.text && !!trimmed.why;
 
-  const handleSubmit = async () => {
-    if (!selectedType) return;
-    await onAdd({
-      document_type: selectedType,
-      document_label: customLabel || selectedOption?.label || selectedType,
-      description,
-      is_required: isRequired,
-    });
-    setSelectedType("");
-    setCustomLabel("");
-    setDescription("");
+  const close = () => {
+    setError(null);
     onClose();
   };
 
+  const handleSubmit = async () => {
+    if (!ready) return;
+    const suggestion = SUGGESTIONS.find((o) => o.label === trimmed.name);
+    setError(null);
+    try {
+      await onRequest({
+        document_label: trimmed.name,
+        client_text: trimmed.text,
+        reason: trimmed.why,
+        ...(suggestion ? { document_type: suggestion.value } : {}),
+      });
+    } catch (err) {
+      setError(requestErrorMessage(err));
+      return;
+    }
+    setName("");
+    setClientText("");
+    setReason("");
+    close();
+  };
+
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog open={isOpen} onOpenChange={close}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Add Required Document</DialogTitle>
+          <DialogTitle>Ask for a document</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <div>
-            <Label>Document Type</Label>
-            <Select value={selectedType} onValueChange={setSelectedType}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select document type..." />
-              </SelectTrigger>
-              <SelectContent>
-                {DOCUMENT_TYPE_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    <div className="flex flex-col">
-                      <span>{option.label}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {option.description}
-                      </span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div>
-            <Label>Custom Label (optional)</Label>
+            <Label htmlFor="request-document-name">Document</Label>
             <Input
-              value={customLabel}
-              onChange={(e) => setCustomLabel(e.target.value)}
-              placeholder={selectedOption?.label || "Document name..."}
+              id="request-document-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              list="request-document-suggestions"
+              placeholder="Passport, proof of accommodation..."
+              maxLength={100}
+              required
+            />
+            <datalist id="request-document-suggestions">
+              {SUGGESTIONS.map((option) => (
+                <option key={option.value} value={option.label} />
+              ))}
+            </datalist>
+          </div>
+
+          <div>
+            <Label htmlFor="request-client-text">What the client reads</Label>
+            <Textarea
+              id="request-client-text"
+              value={clientText}
+              onChange={(e) => setClientText(e.target.value)}
+              placeholder="Tell the client what to send..."
+              rows={3}
+              maxLength={2000}
+              required
             />
           </div>
 
           <div>
-            <Label>Description</Label>
+            <Label htmlFor="request-reason">Why this case needs it</Label>
             <Textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder={
-                selectedOption?.description || "Add notes for the client..."
-              }
+              id="request-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
               rows={2}
+              maxLength={1000}
+              required
             />
+            <p className="text-xs text-muted-foreground mt-1">
+              Do not write the client&apos;s name here.
+            </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="is-required"
-              checked={isRequired}
-              onChange={(e) => setIsRequired(e.target.checked)}
-              className="rounded border-[var(--bz-border-hover)]"
-            />
-            <Label htmlFor="is-required" className="mb-0">
-              Required document
-            </Label>
-          </div>
+          {error && (
+            <p role="alert" className="text-sm text-[var(--state-danger)]">
+              {error}
+            </p>
+          )}
 
           <div className="flex gap-2 justify-end">
-            <Button variant="outline" onClick={onClose} disabled={isLoading}>
+            <Button variant="outline" onClick={close} disabled={isLoading}>
               Cancel
             </Button>
-            <Button
-              onClick={handleSubmit}
-              disabled={!selectedType || isLoading}
-            >
-              {isLoading ? "Adding..." : "Add Document"}
+            <Button onClick={handleSubmit} disabled={!ready || isLoading}>
+              {isLoading ? "Sending..." : "Ask for document"}
             </Button>
           </div>
         </div>
@@ -320,7 +348,7 @@ export function RequiredDocumentsCard({
     documents,
     isLoading,
     stats,
-    addDocument,
+    requestDocument,
     updateDocument,
     deleteDocument,
   } = useRequiredDocuments({ practiceId });
@@ -499,7 +527,7 @@ export function RequiredDocumentsCard({
       <AddDocumentModal
         isOpen={showAddModal}
         onClose={() => setShowAddModal(false)}
-        onAdd={addDocument}
+        onRequest={requestDocument}
         isLoading={isLoading}
       />
 

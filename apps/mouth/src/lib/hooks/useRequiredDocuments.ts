@@ -15,6 +15,8 @@ import {
   RequiredDocument,
   RequiredDocumentCreate,
   RequiredDocumentUpdate,
+  DocumentRequestCreate,
+  DocumentRequestResult,
   ClientDocumentUpload,
   ClientRequiredDocument,
 } from "@/lib/types/required-documents";
@@ -98,6 +100,30 @@ export function useRequiredDocuments(
         });
       } catch (err) {
         throw err;
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [practiceId],
+  );
+
+  // Ask the client for one more document, with the reason (team member)
+  const requestDocument = useCallback(
+    async (data: DocumentRequestCreate) => {
+      if (!practiceId) throw new Error("Practice ID required");
+
+      setIsLoading(true);
+      try {
+        const result = await api.post<DocumentRequestResult>(
+          `/api/crm/practices/${practiceId}/document-requests`,
+          data,
+        );
+        setDocuments((current) =>
+          current.some((document) => document.id === result.document.id)
+            ? current
+            : [...current, result.document],
+        );
+        return result;
       } finally {
         setIsLoading(false);
       }
@@ -213,6 +239,7 @@ export function useRequiredDocuments(
     error,
     stats,
     addDocument,
+    requestDocument,
     updateDocument,
     deleteDocument,
     uploadClientDocument,

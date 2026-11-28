@@ -494,6 +494,41 @@
   },
   {
    "file": "app/routers/crm_practices.py",
+   "function": "request_additional_document",
+   "target": "logger.info",
+   "message": "'Document request %s made on practice %s'",
+   "args": [
+    "created.request_id",
+    "practice_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "request_additional_document",
+   "target": "logger.warning",
+   "message": "'Document request %s: stats cache not invalidated (%s)'",
+   "args": [
+    "created.request_id",
+    "type(cache_error).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "request_additional_document",
+   "target": "logger.error",
+   "message": "'Failed to request a document: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
    "function": "update_practice",
    "target": "logger.warning",
    "message": "'Discount audit append failed for practice %s: %s'",

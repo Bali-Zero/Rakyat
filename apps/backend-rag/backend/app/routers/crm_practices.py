@@ -10,12 +10,12 @@ import json
 import re
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from zoneinfo import ZoneInfo
 
 import asyncpg
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Path, Query, Request
-from pydantic import BaseModel, field_validator, model_validator
+from pydantic import BaseModel, Field, StringConstraints, field_validator, model_validator
 
 from backend.app.core.config import settings
 from backend.app.dependencies import get_current_user, get_database_pool
@@ -37,6 +37,13 @@ from backend.app.utils.logging_utils import get_logger, log_database_operation, 
 from backend.app.utils.service_accounts import CLIENT_ROLES, TEAM_ROLES, normalize_role
 from backend.core.cache import cached, invalidate_cache
 from backend.services.common.background import spawn
+from backend.services.crm.document_requests import (
+    DOCUMENT_TYPE_PATTERN,
+    DocumentRequestRefused,
+    create_document_request,
+    derive_document_type,
+    notify_reviewers_after_commit,
+)
 from backend.services.crm.entity_search import (
     build_practice_search,
     escape_like,
@@ -3163,6 +3170,128 @@ async def add_required_document(
         raise
     except Exception as e:
         logger.error("Failed to add required document: %s", type(e).__name__)
+        raise handle_database_error(e)
+
+
+_Stripped = StringConstraints(strip_whitespace=True, min_length=1)
+
+
+class DocumentRequestCreate(BaseModel):
+    """Ask the client for one more document, and say why this case needs it (V2)."""
+
+    document_label: Annotated[str, _Stripped, Field(max_length=100)]
+    client_text: Annotated[str, _Stripped, Field(max_length=2000)]
+    reason: Annotated[str, _Stripped, Field(max_length=1000)]
+    document_type: str | None = Field(default=None, pattern=DOCUMENT_TYPE_PATTERN.pattern)
+
+
+class DocumentRequestResponse(BaseModel):
+    request_id: int
+    document: RequiredDocumentResponse
+
+
+@router.post(
+    "/{practice_id}/document-requests",
+    response_model=DocumentRequestResponse,
+    status_code=201,
+    dependencies=[Depends(visible_process_target)],
+)
+async def request_additional_document(
+    practice_id: int = Path(..., gt=0),
+    payload: DocumentRequestCreate = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """Ask the client for one more document on an open practice (admin, creator or assignee).
+
+    The slot and the request row are written in one transaction; each configured card reviewer
+    is emailed after it commits. An email failure never fails the request.
+    """
+    requester = current_user.get("email", "system")
+    document_type = payload.document_type or derive_document_type(payload.document_label)
+    try:
+        async with db_pool.acquire() as conn:
+            practice = await conn.fetchrow(
+                "SELECT id, created_by, assigned_to FROM practices WHERE id = $1",
+                practice_id,
+            )
+            if not practice:
+                raise HTTPException(status_code=404, detail="Practice not found")
+
+            user_is_admin, created_by_match, assigned_to_match = _practice_ownership_flags(
+                current_user, practice.get("created_by"), practice.get("assigned_to")
+            )
+            if not user_is_admin and not (created_by_match or assigned_to_match):
+                _deny_practice_mutation(
+                    practice_id,
+                    current_user,
+                    "You don't have permission to ask for documents on this practice",
+                )
+
+            try:
+                created = await create_document_request(
+                    conn,
+                    practice_id=practice_id,
+                    requested_by=requester,
+                    document_label=payload.document_label,
+                    client_text=payload.client_text,
+                    reason=payload.reason,
+                    document_type=document_type,
+                )
+            except DocumentRequestRefused as refused:
+                if refused.code == "practice_not_found":
+                    raise HTTPException(status_code=404, detail="Practice not found") from refused
+                raise HTTPException(
+                    status_code=409,
+                    detail={"code": refused.code, "message": refused.message},
+                ) from refused
+
+        # The transaction has committed: tell the reviewers on a fresh connection. This never
+        # raises and takes no connection when nobody is to be told.
+        await notify_reviewers_after_commit(
+            db_pool,
+            practice_id=practice_id,
+            created=created,
+            requested_by=requester,
+            document_label=payload.document_label,
+            client_text=payload.client_text,
+            reason=payload.reason,
+        )
+
+        row = created.slot
+        logger.info("Document request %s made on practice %s", created.request_id, practice_id)
+        try:
+            await invalidate_cache("zantara:crm_practices_stats:*")
+        except Exception as cache_error:
+            # The request is written: a cache that cannot be cleared must not answer 500.
+            logger.warning(
+                "Document request %s: stats cache not invalidated (%s)",
+                created.request_id,
+                type(cache_error).__name__,
+            )
+        return {
+            "request_id": created.request_id,
+            "document": {
+                "id": row["id"],
+                "practice_id": row["practice_id"],
+                "document_type": row["document_type"],
+                "document_label": row["document_label"],
+                "description": row["description"],
+                "is_required": row["is_required"],
+                "uploaded_by_client": row["uploaded_by_client"],
+                "uploaded_file_id": row["uploaded_file_id"],
+                "uploaded_at": row["uploaded_at"].isoformat() if row["uploaded_at"] else None,
+                "client_notes": row["client_notes"],
+                "team_member_notes": row["team_member_notes"],
+                "status": row["status"],
+                "created_at": row["created_at"].isoformat(),
+                "updated_at": row["updated_at"].isoformat(),
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to request a document: %s", type(e).__name__)
         raise handle_database_error(e)
 
 
