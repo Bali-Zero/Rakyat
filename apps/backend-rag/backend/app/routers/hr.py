@@ -13,7 +13,7 @@ from datetime import date
 from typing import Any
 
 import asyncpg
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, model_validator
 
@@ -36,6 +36,7 @@ from backend.app.services.hr.hr_overview_compose import (
 from backend.app.services.hr.hr_overview_models import MyHrOverview
 from backend.app.services.hr.hr_service import (
     BonusPeriodLockedError,
+    BonusRunRefusedError,
     HRCardError,
     HRService,
     OffPayrollError,
@@ -768,6 +769,70 @@ async def mark_payroll_paid(
         return {"success": True, "period": result}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# ─── BONUS RUNS ──────────────────────────────────────────────────────────
+
+
+class BonusRunApproval(BaseModel):
+    """The figures the screen showed; a stale screen is refused (409 bonus_run_changed)."""
+
+    approved_total_idr: int = Field(ge=0)
+    pending_count: int = Field(ge=0)
+
+
+# 2000-2099, like PayrollCalculateRequest.year: a year outside it is a 422, never a 500
+_BONUS_MONTH = Path(pattern=r"^20\d{2}-(0[1-9]|1[0-2])$", description="YYYY-MM")
+
+
+def _first_of(bonus_month: str) -> date:
+    return date(int(bonus_month[:4]), int(bonus_month[5:7]), 1)
+
+
+@router.post("/bonus-runs/{bonus_month}/approve")
+async def approve_bonus_run(
+    data: BonusRunApproval,
+    bonus_month: str = _BONUS_MONTH,
+    current_user: dict[str, Any] = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> Any:
+    """Close a bonus month: its approved rows are reserved to the run (payroll writers only)."""
+    _require_payroll_writer(current_user)
+    service = _get_hr_service(db_pool)
+    try:
+        result = await service.approve_bonus_run(
+            _first_of(bonus_month),
+            _get_user_id(current_user),
+            expected_approved_idr=data.approved_total_idr,
+            expected_pending=data.pending_count,
+        )
+    except BonusRunRefusedError as e:
+        return JSONResponse(status_code=409, content={"detail": str(e), "code": e.code})
+    await invalidate_cache("zantara:hr_bonuses:*")
+    await invalidate_cache("zantara:hr_payroll:*")
+    return {"success": True, **result}
+
+
+@router.post("/bonus-runs/{bonus_month}/mark-paid")
+async def mark_bonus_run_paid(
+    bonus_month: str = _BONUS_MONTH,
+    current_user: dict[str, Any] = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> Any:
+    """Mark an approved bonus run paid, by hand, whenever Asya has paid it (payroll writers only)."""
+    _require_payroll_writer(current_user)
+    service = _get_hr_service(db_pool)
+    try:
+        result = await service.mark_bonus_run_paid(
+            _first_of(bonus_month), _get_user_id(current_user)
+        )
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from None
+    except BonusRunRefusedError as e:
+        return JSONResponse(status_code=409, content={"detail": str(e), "code": e.code})
+    await invalidate_cache("zantara:hr_bonuses:*")
+    await invalidate_cache("zantara:hr_payroll:*")
+    return {"success": True, **result}
 
 
 # ─── LEAVE ───────────────────────────────────────────────────────────────

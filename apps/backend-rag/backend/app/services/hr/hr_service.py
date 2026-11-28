@@ -44,6 +44,10 @@ def business_today() -> date:
     return (datetime.now(timezone.utc) + timedelta(hours=8)).date()
 
 
+def _next_month(month: date) -> date:
+    return date(month.year + month.month // 12, month.month % 12 + 1, 1)
+
+
 #: What a manual bonus stores in practice_type_code when no service is named
 #: (the column is NOT NULL and has no foreign key).
 MANUAL_BONUS_CODE = "manual"
@@ -63,6 +67,14 @@ class PayrollRosterChangedError(Exception):
 
 class OffPayrollError(Exception):
     """The employee's card says `on_payroll = false`: no payroll item may be created for them."""
+
+
+class BonusRunRefusedError(Exception):
+    """Closing or paying a bonus month refused. `code`: bonus_run_not_due|out_of_order|closed|changed|not_approved."""
+
+    def __init__(self, code: str, msg: str) -> None:
+        super().__init__(msg)
+        self.code = f"bonus_run_{code}"
 
 
 class SelfApprovalError(ValueError):
@@ -147,6 +159,50 @@ async def _refuse_if_bonus_month_closed(conn: Any, month: int, year: int) -> Non
             else "That month's bonus run is already closed"
         )
         raise BonusPeriodLockedError(msg)
+
+
+def _run_set_sql() -> str:
+    """Rows (id, in_set) of the payroll set, to join a run's inputs to who is on payroll."""
+    return (
+        f"(SELECT e.id, {payroll_set_sql()} AS in_set FROM hr_employees e "
+        "JOIN team_members tm ON tm.id = e.team_member_id)"
+    )
+
+
+async def _run_figures(conn: Any, month: date, as_of: date) -> dict[str, int]:
+    """What approving run `month` would do now: the screen figures the stale-screen guard compares."""
+    row = await conn.fetchrow(
+        f"""SELECT
+              count(*) FILTER (WHERE i.status = 'approved' AND NOT i.held AND s.in_set IS TRUE) AS approved_count,
+              COALESCE(sum(i.amount_idr) FILTER (WHERE i.status = 'approved' AND NOT i.held
+                       AND s.in_set IS TRUE), 0)::bigint AS approved_idr,
+              count(*) FILTER (WHERE i.status = 'pending' AND NOT i.held) AS pending_count,
+              COALESCE(sum(i.amount_idr) FILTER (WHERE i.status = 'pending' AND NOT i.held), 0)::bigint AS pending_idr,
+              count(*) FILTER (WHERE i.held) AS held_count,
+              count(*) FILTER (WHERE i.status = 'approved' AND NOT i.held AND s.in_set IS NOT TRUE) AS carried_count
+            FROM hr_bonus_run_inputs($1::date, $2::date) i
+            LEFT JOIN {_run_set_sql()} s ON s.id = i.employee_id""",
+        month,
+        as_of,
+    )
+    return dict(row)
+
+
+async def bonus_run_ledger_totals(conn: Any, month: date) -> dict[str, int]:
+    """Ledger totals of a run: `reserved_*` is what the run pays (rows with bonus_run_id = month);
+    `ever_deferred_*` is HISTORICAL: every row that was ever deferred out of `month` (deferred_from = month),
+    whether it is still held, reserved by a later run or already paid by it. The deferral mark is never
+    cleared, so this count does not shrink when a later run pays the row.
+    """
+    row = await conn.fetchrow(
+        """SELECT count(*) FILTER (WHERE bonus_run_id = $1) AS reserved_count,
+                  COALESCE(sum(amount_idr) FILTER (WHERE bonus_run_id = $1), 0)::bigint AS reserved_idr,
+                  count(*) FILTER (WHERE deferred_from = $1) AS ever_deferred_count,
+                  COALESCE(sum(amount_idr) FILTER (WHERE deferred_from = $1), 0)::bigint AS ever_deferred_idr
+           FROM hr_bonus_ledger WHERE bonus_run_id = $1 OR deferred_from = $1""",
+        month,
+    )
+    return dict(row)
 
 
 ANNUAL_LEAVE_CODE = "annual"
@@ -1473,6 +1529,154 @@ class HRService:
 
                 logger.info("Payroll period %s marked as paid", period_id)
                 return dict(row)
+
+    # ─── BONUS RUNS (a closed bonus month is approved and paid by its own run) ───
+
+    async def approve_bonus_run(
+        self, month: date, approved_by: str, *, expected_approved_idr: int, expected_pending: int
+    ) -> dict[str, Any]:
+        """Close bonus month `month`: reserve its approved, unheld, on-payroll rows to the run, bind its
+        holds, defer the held and off-payroll ones. Unheld pending rows stay unpayable (strict close)."""
+        as_of = business_today()
+        if month < BONUS_RUN_FIRST_MONTH or month.day != 1 or as_of < _next_month(month):
+            msg = "That bonus month is not closed yet"
+            raise BonusRunRefusedError("not_due", msg)
+        async with self.db_pool.acquire() as conn:
+            try:
+                async with conn.transaction():
+                    return await self._approve_bonus_run_tx(
+                        conn, month, as_of, approved_by, expected_approved_idr, expected_pending
+                    )
+            except asyncpg.UniqueViolationError:
+                msg = "That bonus month is already closed"
+                raise BonusRunRefusedError("closed", msg) from None
+
+    async def _approve_bonus_run_tx(
+        self,
+        conn: Any,
+        month: date,
+        as_of: date,
+        approved_by: str,
+        expected_approved_idr: int,
+        expected_pending: int,
+    ) -> dict[str, Any]:
+        await _lock_bonus_allocations(conn, exclusive=True)
+        await conn.execute(
+            """SELECT f.practice_id FROM practice_visa_followups f
+               JOIN hr_delivery_bonus_events e ON e.practice_id=f.practice_id
+               WHERE f.due_on <= $1 OR EXISTS (
+                   SELECT 1 FROM hr_visa_bonus_hold_periods h WHERE h.practice_id=f.practice_id
+               )
+               ORDER BY f.practice_id FOR SHARE OF f, e""",
+            as_of,
+        )
+        # EVERY employee row, not only the payroll set (as the salary roster check does): a concurrent card
+        # or login edit that puts someone on payroll after the figures compare would otherwise be reserved
+        # unconfirmed. The edit's row lock then waits for this commit.
+        await conn.execute(
+            "SELECT e.id FROM hr_employees e JOIN team_members tm ON tm.id = e.team_member_id "
+            "ORDER BY e.id FOR SHARE OF e, tm"
+        )
+        await _lock_bonus_month(conn, month.month, month.year, exclusive=True)
+        if await conn.fetchval("SELECT 1 FROM hr_bonus_runs WHERE bonus_month = $1", month):
+            msg = "That bonus month is already closed"
+            raise BonusRunRefusedError("closed", msg)
+        missing = await conn.fetchval(
+            """SELECT d::date FROM generate_series($1::timestamp, $2::timestamp - interval '1 month',
+                      interval '1 month') d
+               WHERE NOT EXISTS (SELECT 1 FROM hr_bonus_runs r WHERE r.bonus_month = d::date)
+               ORDER BY d LIMIT 1""",
+            BONUS_RUN_FIRST_MONTH,
+            month,
+        )
+        if missing is not None:
+            msg = f"Close {missing:%B %Y} first"
+            raise BonusRunRefusedError("out_of_order", msg)
+        figures = await _run_figures(conn, month, as_of)
+        if (figures["approved_idr"], figures["pending_count"]) != (
+            expected_approved_idr,
+            expected_pending,
+        ):
+            msg = "The month changed since this screen was loaded: review it again"
+            raise BonusRunRefusedError("changed", msg)
+        run = await conn.fetchrow(
+            "INSERT INTO hr_bonus_runs (bonus_month, status, approved_by) "
+            "VALUES ($1, 'approved', $2) RETURNING *",
+            month,
+            approved_by,
+        )
+        # Every hold binds (not only in-set employees'), so each cause below has its FK parent.
+        await conn.execute(
+            """INSERT INTO hr_visa_bonus_hold_periods (practice_id, bonus_run_id)
+               SELECT DISTINCT practice_id, $1::date FROM hr_bonus_run_holds($1::date, $2::date)
+               ON CONFLICT (practice_id) DO NOTHING""",
+            month,
+            as_of,
+        )
+        await conn.execute(
+            """INSERT INTO hr_bonus_deferral_causes (bonus_id, practice_id)
+               SELECT i.bonus_id, h.practice_id
+               FROM hr_bonus_run_inputs($1::date, $2::date) i
+               JOIN hr_bonus_run_holds($1::date, $2::date) h USING (employee_id)
+               WHERE NOT EXISTS (
+                   SELECT 1 FROM hr_bonus_deferral_causes c
+                   JOIN hr_visa_bonus_obligations o USING (practice_id)
+                   WHERE c.bonus_id = i.bonus_id AND o.bound_run_month IS DISTINCT FROM $1::date
+               ) ON CONFLICT DO NOTHING""",
+            month,
+            as_of,
+        )
+        # Reserve the payable rows; defer the held and the off-payroll ones. No SET of practice_id or
+        # employee_id, so the ledger's validation triggers do not fire.
+        await conn.execute(
+            f"""UPDATE hr_bonus_ledger b
+                SET bonus_run_id = CASE WHEN i.held OR s.in_set IS NOT TRUE THEN NULL ELSE $1::date END,
+                    deferred_from = CASE WHEN i.held OR s.in_set IS NOT TRUE
+                                         THEN COALESCE(b.deferred_from, $1::date) ELSE b.deferred_from END
+                FROM hr_bonus_run_inputs($1::date, $2::date) i
+                JOIN {_run_set_sql()} s ON s.id = i.employee_id
+                WHERE b.id = i.bonus_id AND (i.held OR i.status = 'approved')""",
+            month,
+            as_of,
+        )
+        totals = await bonus_run_ledger_totals(conn, month)
+        logger.info("Bonus run %s approved: %s rows reserved", month, totals["reserved_count"])
+        return {
+            "run": dict(run),
+            **totals,
+            "unpayable_pending_count": figures["pending_count"],
+            "unpayable_pending_idr": figures["pending_idr"],
+        }
+
+    async def mark_bonus_run_paid(self, month: date, paid_by: str) -> dict[str, Any]:
+        """Mark an approved run paid, and exactly the rows reserved to it. No date or order gate."""
+        async with self.db_pool.acquire() as conn:
+            async with conn.transaction():
+                await _lock_bonus_allocations(conn, exclusive=True)
+                await _lock_bonus_month(conn, month.month, month.year, exclusive=True)
+                status = await conn.fetchval(
+                    "SELECT status FROM hr_bonus_runs WHERE bonus_month = $1 FOR UPDATE", month
+                )
+                if status is None:
+                    msg = f"No bonus run for {month:%Y-%m}"
+                    raise LookupError(msg)
+                if status != "approved":
+                    msg = "That bonus run is not waiting for payment"
+                    raise BonusRunRefusedError("not_approved", msg)
+                run = await conn.fetchrow(
+                    "UPDATE hr_bonus_runs SET status = 'paid', paid_by = $2 "
+                    "WHERE bonus_month = $1 RETURNING *",
+                    month,
+                    paid_by,
+                )
+                paid = await conn.fetchrow(
+                    """WITH p AS (UPDATE hr_bonus_ledger SET status = 'paid'
+                                  WHERE bonus_run_id = $1 AND status = 'approved' RETURNING amount_idr)
+                       SELECT count(*) AS paid_count, COALESCE(sum(amount_idr), 0)::bigint AS paid_idr FROM p""",
+                    month,
+                )
+                logger.info("Bonus run %s marked paid", month)
+                return {"run": dict(run), **dict(paid)}
 
     # ─── LEAVE ───────────────────────────────────────────────────────
 
