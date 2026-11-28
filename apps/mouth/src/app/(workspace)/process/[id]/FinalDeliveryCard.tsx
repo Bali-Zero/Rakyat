@@ -50,8 +50,13 @@ interface Delivery {
   // A November practice completed before Final delivery: it takes every empty document.
   legacy_proof?: boolean;
   bonus_instruction?: "upload" | "upload_or_waive" | null;
+  // The saved documents already prove the service: Complete does not need every slot.
+  proof_ready?: boolean;
   slots: Slot[];
 }
+
+// Raised before anything was sent, so the card shows its own reason and never "could not confirm".
+class NotSent extends Error {}
 
 function bonusInstruction(data: Delivery, kind: "upload" | "upload_or_waive") {
   const slot = data.slots.find((s) => s.key === data.bonus_slot);
@@ -100,7 +105,7 @@ function StaffDeliveryCard({
     post = false,
   ): Promise<T> {
     if (!isSameIdentity(readSessionIdentity(), identity))
-      throw new Error("Session changed. Reload the practice.");
+      throw new NotSent("Session changed. Reload the practice.");
     const response = await api.requestWithCredential<T>(
       path,
       post
@@ -150,17 +155,24 @@ function StaffDeliveryCard({
     data?.status === "completed" &&
     data.legacy_proof === true;
   const staffEdit = writable || legacyOpen;
+  // A completed practice keeps the follow-up actions (and, once delivered, a waiver) for its manager.
+  const completedManager =
+    practice.can_manage_delivery === true && data?.status === "completed";
   const visaDateSlot = data?.bonus_slot === "electronic_visa";
   const missingSlots =
     data?.slots.filter(
       (slot) =>
         slot.document_id == null && !(slot.condition && slot.waiver_reason),
     ) ?? [];
+  const proofSlot =
+    data?.slots.find(
+      (s) => s.key === data.bonus_slot && s.document_id != null,
+    ) ?? data?.slots.find((s) => s.document_id != null);
   const canDeliver =
     writable &&
     !data.needs_titles &&
     data.slots.length > 0 &&
-    missingSlots.length === 0;
+    (missingSlots.length === 0 || data.proof_ready === true);
   const canUpload =
     !writable ||
     !chooseCompany ||
@@ -185,7 +197,7 @@ function StaffDeliveryCard({
     const allowed =
       writable ||
       repairable(repairSlot) ||
-      (legacyOpen && repairSlot === undefined);
+      ((legacyOpen || completedManager) && repairSlot === undefined);
     if (pending.current || !allowed) return;
     pending.current = true;
     setWorking(true);
@@ -212,14 +224,20 @@ function StaffDeliveryCard({
       );
       // A received error (409 and the like) is shown as it came. Only a LOST response is recovered.
       const refreshed = await mutate().catch(() => undefined);
-      if (e instanceof ApiError || !recovery) {
+      // A gateway error says nothing about the outcome: the refreshed state decides.
+      const gateway = e instanceof ApiError && [502, 503].includes(e.status);
+      if (
+        e instanceof NotSent ||
+        (e instanceof ApiError && !gateway) ||
+        !recovery
+      ) {
         // nothing more to say
       } else if (refreshed && recovery.confirmed?.(refreshed)) {
         setFailure("");
         setFeedback(message);
         window.dispatchEvent(new Event("kita:delivery-changed"));
         if (writable && refreshed.status === "completed") onComplete();
-      } else if (recovery.unconfirmed) {
+      } else if (recovery.unconfirmed && !gateway) {
         setFailure(recovery.unconfirmed);
       }
     } finally {
@@ -262,7 +280,9 @@ function StaffDeliveryCard({
           {
             file_name: file.name,
             ...(needsIssueDate(slot) ? { issued_on: issueDate } : {}),
-            file_content: await fileToBase64(file),
+            file_content: await fileToBase64(file).catch(() => {
+              throw new NotSent("The file could not be read. Choose it again.");
+            }),
             mime_type: file.type,
             ...(writable && chooseCompany && companyId
               ? { company_id: Number(companyId) }
@@ -297,7 +317,7 @@ function StaffDeliveryCard({
           ? "Existing email receipt recorded."
           : "Escalation status updated.",
       // A cohort practice is authorised by staff-edit; the server judges each action.
-      legacyOpen
+      legacyOpen || completedManager
         ? undefined
         : data.slots.find((s) => s.key === data.visa_followup?.slot_key),
     );
@@ -505,7 +525,7 @@ function StaffDeliveryCard({
                           practiceId={practice.id}
                           value={data.visa_followup}
                           busy={working}
-                          writable={staffEdit}
+                          writable={staffEdit || completedManager}
                           act={followupAction}
                         />
                       )}
@@ -537,7 +557,9 @@ function StaffDeliveryCard({
                             Confirm the existing permit covers both documents
                           </button>
                         )}
-                      {staffEdit &&
+                      {(staffEdit ||
+                        (completedManager &&
+                          data.delivery_recorded === true)) &&
                         slot.condition &&
                         !saved &&
                         !waived &&
@@ -666,7 +688,9 @@ function StaffDeliveryCard({
                 {working
                   ? "Saving changes…"
                   : canDeliver
-                    ? "Ready to complete"
+                    ? missingSlots.length && proofSlot
+                      ? `The first proof completes the practice: ${deliveryDocumentTitle(proofSlot)}`
+                      : "Ready to complete"
                     : data.needs_titles
                       ? "Name the required documents first."
                       : missingSlots.length
