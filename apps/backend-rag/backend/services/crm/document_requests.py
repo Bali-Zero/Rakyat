@@ -627,3 +627,121 @@ async def reopen_request(
             request_id,
         )
     return {"id": request_id, "decision": "pending", "card_document_removed": removed}
+
+
+# ---------------------------------------------------------------------------------------------
+# Third cut: the practice row says where its request stands, and its client text can be fixed.
+# ---------------------------------------------------------------------------------------------
+
+# The slot states in which a correction is allowed, exactly as stored: on any other the client
+# already sent the document, and the text beside it is the record of what the client answered.
+CORRECTABLE_SLOT_STATUSES = ("pending", "rejected")
+
+_PRACTICE_STATUS_LOCK = "SELECT status FROM practices WHERE id = $1 FOR UPDATE"
+_PRACTICE_REQUEST_LOCK = """
+    SELECT id, required_document_id FROM practice_document_requests
+    WHERE id = $2 AND practice_id = $1 FOR UPDATE
+"""
+_SLOT_LOCK = """
+    SELECT status FROM practice_required_documents
+    WHERE id = $2 AND practice_id = $1 FOR UPDATE
+"""
+
+
+async def list_practice_requests(
+    conn: asyncpg.Connection, practice_id: int
+) -> list[dict[str, Any]]:
+    """The state of the requests made on one practice, newest first. One query, no client datum,
+    no reason and no client text."""
+    rows = await conn.fetch(
+        """
+        SELECT id, required_document_id, decision, requested_by, requested_at
+        FROM practice_document_requests
+        WHERE practice_id = $1
+        ORDER BY id DESC
+        LIMIT 200
+        """,
+        practice_id,
+    )
+    return [
+        {
+            "id": row["id"],
+            "required_document_id": row["required_document_id"],
+            "state": row["decision"],
+            "requested_by": row["requested_by"],
+            "requested_at": _iso(row["requested_at"]),
+        }
+        for row in rows
+    ]
+
+
+async def correct_client_text(
+    conn: asyncpg.Connection, *, practice_id: int, request_id: int, client_text: str
+) -> dict[str, Any]:
+    """Replace the client text of the slot a request created, and of the request, in ONE
+    transaction. Locks: practice, request, slot. Writes those two rows and nothing else: no
+    decision, no card, no email, no column of the practice.
+
+    Raises ``DocumentRequestRefused`` (``practice_not_found`` / ``request_not_found`` /
+    ``practice_closed`` / ``slot_withdrawn`` / ``slot_answered``); nothing is then written.
+    Returns the slot, built inside the transaction, with the keys of a required document.
+    """
+    async with conn.transaction():
+        practice = await conn.fetchrow(_PRACTICE_STATUS_LOCK, practice_id)
+        if practice is None:
+            raise DocumentRequestRefused("practice_not_found", "Practice not found")
+        if (practice["status"] or "").strip().lower() in CLOSED_STATUSES:
+            raise DocumentRequestRefused(
+                "practice_closed",
+                "This practice is closed: its documents can no longer be changed.",
+            )
+        request = await conn.fetchrow(_PRACTICE_REQUEST_LOCK, practice_id, request_id)
+        if request is None:
+            raise DocumentRequestRefused("request_not_found", "Document request not found")
+        slot_id = request["required_document_id"]
+        # The column is nullable: a request with no slot id has nothing to lock.
+        slot_state = (
+            await conn.fetchrow(_SLOT_LOCK, practice_id, slot_id) if slot_id is not None else None
+        )
+        if slot_state is None:
+            raise DocumentRequestRefused(
+                "slot_withdrawn", "This document was removed from the practice."
+            )
+        if slot_state["status"] not in CORRECTABLE_SLOT_STATUSES:
+            raise DocumentRequestRefused(
+                "slot_answered", "The client already sent this document: mark it rejected first."
+            )
+        slot = await conn.fetchrow(
+            """
+            UPDATE practice_required_documents
+            SET description = $3, updated_at = NOW()
+            WHERE id = $2 AND practice_id = $1
+            RETURNING *
+            """,
+            practice_id,
+            slot_id,
+            client_text,
+        )
+        await conn.execute(
+            "UPDATE practice_document_requests SET client_text = $2 WHERE id = $1",
+            request_id,
+            client_text,
+        )
+        # Built inside the transaction: nothing that can fail runs after the commit.
+        document = {
+            "id": slot["id"],
+            "practice_id": slot["practice_id"],
+            "document_type": slot["document_type"],
+            "document_label": slot["document_label"],
+            "description": slot["description"],
+            "is_required": slot["is_required"],
+            "uploaded_by_client": slot["uploaded_by_client"],
+            "uploaded_file_id": slot["uploaded_file_id"],
+            "uploaded_at": _iso(slot["uploaded_at"]),
+            "client_notes": slot["client_notes"],
+            "team_member_notes": slot["team_member_notes"],
+            "status": slot["status"],
+            "created_at": slot["created_at"].isoformat(),
+            "updated_at": slot["updated_at"].isoformat(),
+        }
+    return document
