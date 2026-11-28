@@ -130,6 +130,95 @@ describe("bonus runs on the payroll page", () => {
     expect(onChanged).toHaveBeenCalled();
   });
 
+  it.each([
+    "bonus_run_not_due",
+    "bonus_run_out_of_order",
+    "bonus_run_closed",
+    "bonus_run_not_approved",
+  ])(
+    "toasts the refusal %s, reloads, and never says approved",
+    async (code) => {
+      hrApi.approveBonusRun.mockRejectedValue(
+        new ApiError("Refused by the server", 409, {
+          detail: "Refused by the server",
+          code,
+        }),
+      );
+      const onChanged = vi.fn();
+      render(<BonusRuns runs={[run()]} canWrite onChanged={onChanged} />);
+      await userEvent.click(
+        screen.getByRole("button", { name: /Approve run/ }),
+      );
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith("Refused by the server"),
+      );
+      expect(toast.success).not.toHaveBeenCalled();
+      expect(onChanged).toHaveBeenCalled();
+    },
+  );
+
+  it("disables every button while a request is in flight, so a second click posts nothing", async () => {
+    let release: (value: unknown) => void = () => {};
+    hrApi.approveBonusRun.mockReturnValue(
+      new Promise((resolve) => (release = resolve)),
+    );
+    const onChanged = vi.fn();
+    render(
+      <BonusRuns
+        runs={[run({ bonus_month: "2026-12-01", status: "approved" }), run()]}
+        canWrite
+        onChanged={onChanged}
+      />,
+    );
+    const approveButton = screen.getByRole("button", { name: /Approve run/ });
+    await userEvent.click(approveButton);
+    await waitFor(() => expect(approveButton).toBeDisabled());
+    expect(screen.getByRole("button", { name: /Mark paid/ })).toBeDisabled();
+    await userEvent.click(approveButton);
+    await userEvent.click(screen.getByRole("button", { name: /Mark paid/ }));
+    expect(hrApi.approveBonusRun).toHaveBeenCalledTimes(1);
+    expect(hrApi.markBonusRunPaid).not.toHaveBeenCalled();
+    release({ success: true });
+    await waitFor(() => expect(onChanged).toHaveBeenCalled());
+    expect(approveButton).toBeEnabled();
+  });
+
+  it("toasts a mark-paid refusal, reloads, and never says paid", async () => {
+    hrApi.markBonusRunPaid.mockRejectedValue(
+      new ApiError("That bonus run is not waiting for payment", 409, {
+        detail: "That bonus run is not waiting for payment",
+        code: "bonus_run_not_approved",
+      }),
+    );
+    const onChanged = vi.fn();
+    render(
+      <BonusRuns
+        runs={[run({ status: "approved" })]}
+        canWrite
+        onChanged={onChanged}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Mark paid/ }));
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        "That bonus run is not waiting for payment",
+      ),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(onChanged).toHaveBeenCalled();
+  });
+
+  it("dates a payment by the Bali day: 00:30 WITA on 26 Dec is the 26th", () => {
+    render(
+      <BonusRuns
+        runs={[run({ status: "paid", paid_at: "2026-12-25T16:30:00Z" })]}
+        canWrite
+        onChanged={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Paid 26 Dec 2026")).toBeVisible();
+  });
+
   it("marks an approved run paid after confirming the amount", async () => {
     render(
       <BonusRuns
