@@ -60,6 +60,23 @@ BASE_SQL = """
     ORDER BY prd.is_required DESC, prd.created_at DESC
 """
 
+# Every column the statement may return: base's eleven and the two this cut adds.
+RESULT_COLUMNS = {
+    "id",
+    "practice_id",
+    "document_type",
+    "document_label",
+    "description",
+    "is_required",
+    "uploaded_by_client",
+    "status",
+    "client_notes",
+    "process_name",
+    "process_status",
+    "case_requested_at",
+    "case_added_by_name",
+}
+
 T0 = datetime(2026, 6, 1, 8, 0, 0)  # naive: practice_required_documents.created_at is timestamp
 ASKED_AT = datetime(2026, 11, 28, 12, 0, 0, tzinfo=timezone.utc)
 ASKER = "zz.asker@example.test"
@@ -401,17 +418,23 @@ async def test_for_a_client_with_no_request_rows_the_order_is_the_one_of_base(
 
 
 @pytest.mark.asyncio
-async def test_the_statement_result_never_carries_requested_by_email_or_full_name(
+async def test_the_statement_result_is_exactly_thirteen_columns_and_no_staff_address(
     world: World,
 ) -> None:
+    """The exact columns of the result, not a list of forbidden names: an address selected
+    under another alias is one column too many, and no raw value holds the address either."""
     await world.member(ASKER, "Zz Maya")
     practice = await world.practice()
+    await world.seed(practice)
     await world.ask(practice)
     rows = await world.conn.fetch(REQUIRED_DOCUMENTS_SQL, world.client_id)
-    assert rows
-    keys = set(rows[0].keys())
-    assert keys.isdisjoint({"requested_by", "email", "full_name", "reason", "client_text"})
-    assert {"case_requested_at", "case_added_by_name"} <= keys
+    assert len(rows) == 4
+    for row in rows:
+        assert set(row.keys()) == RESULT_COLUMNS
+        raw = " ".join(str(value) for value in row.values())
+        assert "@" not in raw
+        assert "Zz Full Name Family" not in raw
+    assert [row["case_added_by_name"] for row in rows].count("Zz Maya") == 1
     for item in await world.answer():
         assert set(item).isdisjoint({"requested_by", "email", "full_name"})
         assert "Zz Full Name Family" not in json.dumps(item)
