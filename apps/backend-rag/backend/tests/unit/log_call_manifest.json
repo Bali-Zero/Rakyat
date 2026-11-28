@@ -394,6 +394,29 @@
   },
   {
    "file": "app/routers/crm_practices.py",
+   "function": "decide_document_request",
+   "target": "logger.info",
+   "message": "'Document request %s decided: %s'",
+   "args": [
+    "request_id",
+    "payload.decision"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "decide_document_request",
+   "target": "logger.error",
+   "message": "'Failed to decide a document request: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
    "function": "delete_practice",
    "target": "log_success",
    "message": "'Deleted (soft) practice'",
@@ -494,6 +517,29 @@
   },
   {
    "file": "app/routers/crm_practices.py",
+   "function": "reopen_document_request",
+   "target": "logger.info",
+   "message": "'Document request %s reopened (card row removed: %s)'",
+   "args": [
+    "request_id",
+    "answer['card_document_removed']"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "reopen_document_request",
+   "target": "logger.error",
+   "message": "'Failed to reopen a document request: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
    "function": "request_additional_document",
    "target": "logger.info",
    "message": "'Document request %s made on practice %s'",
@@ -521,6 +567,17 @@
    "function": "request_additional_document",
    "target": "logger.error",
    "message": "'Failed to request a document: %s'",
+   "args": [
+    "type(e).__name__"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/routers/crm_practices.py",
+   "function": "review_document_requests",
+   "target": "logger.error",
+   "message": "'Failed to list document requests: %s'",
    "args": [
     "type(e).__name__"
    ],

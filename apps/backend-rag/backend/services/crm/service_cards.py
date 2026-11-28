@@ -19,6 +19,12 @@ def _listed(code: str | None, raw: str) -> bool:
     return "*" in codes or (code is not None and code in codes)
 
 
+def seeding_armed_for(code: str | None) -> bool:
+    """Whether the seeder would use the card of this type code now (the setting lists it)."""
+    raw = (getattr(settings, "service_cards_seeding_codes", "") or "").strip()
+    return bool(raw) and _listed(code, raw)
+
+
 async def seed_required_documents_from_card(
     conn: asyncpg.Connection,
     practice_id: int,
