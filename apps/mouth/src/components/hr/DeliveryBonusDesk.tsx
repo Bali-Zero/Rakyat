@@ -18,6 +18,7 @@ import Link from "next/link";
 import React, { useEffect, useId, useState } from "react";
 import { CARD, FOCUS, SERIF } from "@/components/workspace/r19/tokens";
 import { api } from "@/lib/api";
+import { bonusMonthLabel, bonusPaydayText } from "@/lib/hr/bonus-run-format";
 import styles from "./DeliveryBonusDesk.module.css";
 import {
   acceptResponse,
@@ -55,6 +56,14 @@ const holdActions: Record<Hold["next_action"], string> = {
   upload_after_email:
     "Email sent. Upload the required permit to clear this hold.",
 };
+type AwaitingPayment = {
+  bonus_month: string;
+  run_status: "open" | "approved";
+  amount_idr: number;
+  pending_idr: number;
+  expected_payday: string | null;
+  payday_salary_month: string;
+};
 type Desk = {
   team_member_id: string;
   month: string;
@@ -70,6 +79,8 @@ type Desk = {
   };
   recent: Earned[];
   holds: Hold[];
+  /** Ended bonus months whose run is not paid yet: gross amounts, no tax. */
+  awaiting_payment?: AwaitingPayment[];
   next_case: {
     practice_id: number;
     service: string;
@@ -106,7 +117,7 @@ const statusNames: Record<string, string> = {
   approved: "Approved",
   paid: "Paid",
   awaiting_rate: "Rate to confirm",
-  payroll_locked: "Payroll review",
+  payroll_locked: "Month closed · HR review",
   forfeited: "No bonus · paid below price",
   no_bonus: "No bonus for this service",
   reversed: "Reversed",
@@ -294,6 +305,7 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
   const total = data.totals.pending + data.totals.approved + data.totals.paid;
   const reached = data.target !== null && data.milestones >= data.target;
   const holds = data.holds ?? [];
+  const awaiting = data.awaiting_payment ?? [];
   const next = holds.some(
     (row) => row.practice_id === data.next_case?.practice_id,
   )
@@ -337,9 +349,9 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
       </header>
 
       <div className={styles.statement}>
-        <section className={styles.balance} aria-label="Payroll breakdown">
+        <section className={styles.balance} aria-label="Bonus breakdown">
           <h3 className="flex items-center gap-2 text-xs leading-snug font-bold text-[var(--bz-text-2)]">
-            Bonuses in this payroll month
+            Bonuses this month
           </h3>
           <p className={styles.money} style={SERIF}>
             {money(total)}
@@ -362,7 +374,7 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
           <div
             className="grid grid-cols-3 gap-1"
             role="group"
-            aria-label="Inspect payroll amounts"
+            aria-label="Inspect bonus amounts"
           >
             {payStages.map((stage) => (
               <button
@@ -393,8 +405,8 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
               className="mt-1.5 text-xs leading-relaxed text-[var(--bz-text-2)]"
             >
               {total > 0
-                ? `${statusNames[selectedStage]} · ${percentage.format(data.totals[selectedStage] / total)} of this payroll total`
-                : "No priced bonuses in this payroll month."}
+                ? `${statusNames[selectedStage]} · ${percentage.format(data.totals[selectedStage] / total)} of this month's total`
+                : "No priced bonuses this month."}
             </p>
           )}
           {(data.totals.awaiting_rate > 0 ||
@@ -405,7 +417,7 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
               )}
               {data.totals.payroll_locked > 0 && (
                 <span>
-                  {data.totals.payroll_locked} awaiting payroll review
+                  {data.totals.payroll_locked} · Month closed · HR review
                 </span>
               )}
             </p>
@@ -519,6 +531,24 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
         </section>
       </div>
 
+      {awaiting.length > 0 && (
+        <section aria-label="Awaiting payment" className="grid gap-1 py-3">
+          <h3 className={sectionTitle}>Awaiting payment</h3>
+          {awaiting.map((row) => (
+            <p
+              key={row.bonus_month}
+              className="text-xs leading-relaxed text-[var(--bz-text-2)]"
+            >
+              {bonusMonthLabel(row.bonus_month)} ·{" "}
+              <strong>{money(row.amount_idr)}</strong> gross ·{" "}
+              {bonusPaydayText(row.expected_payday, row.payday_salary_month)}
+              {row.pending_idr > 0 &&
+                ` · ${money(row.pending_idr)} still pending, not paid by this run`}
+            </p>
+          ))}
+        </section>
+      )}
+
       {holds.length > 0 && (
         <section aria-label="Visa bonus payout holds" className={styles.holds}>
           <h3 className={sectionTitle}>
@@ -619,7 +649,7 @@ function PersonalDeliveryDesk({ identity }: { identity: SessionIdentity }) {
           {selectedStage && (
             <div className="flex flex-wrap items-center justify-between gap-x-3 text-xs">
               <span>
-                {statusNames[selectedStage]} · {month} payroll
+                {statusNames[selectedStage]} · {month} bonuses
               </span>
               <button
                 type="button"
@@ -706,7 +736,7 @@ function PermitHold({ row }: { row: Hold }) {
           </time>
         </p>
         <p className="text-xs leading-relaxed text-[var(--bz-text-2)]">
-          Earliest payroll month ·{" "}
+          Earliest bonus month ·{" "}
           {baliDate(row.payout_from_month, { month: "long", year: "numeric" })}
         </p>
       </div>
@@ -739,11 +769,12 @@ function RecentBonus({ row }: { row: Earned }) {
           {!noPayroll && (
             <>
               {" "}
-              · {baliDate(row.awarded_at, {
+              ·{" "}
+              {baliDate(row.awarded_at, {
                 month: "short",
                 year: "numeric",
               })}{" "}
-              payroll
+              bonuses
             </>
           )}
         </p>

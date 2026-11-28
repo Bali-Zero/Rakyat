@@ -84,7 +84,7 @@ describe("DeliveryBonusDesk", () => {
     ).toHaveAttribute("href", "/process/47#final-delivery");
     expect(screen.getByText("Bonus milestone already recorded")).toBeVisible();
     expect(
-      screen.getByText(/Electronic Visa uploaded.*Dec 2026 payroll/),
+      screen.getByText(/Electronic Visa uploaded.*Dec 2026 bonuses/),
     ).toBeVisible();
     expect(screen.getByText("1 awaiting a rate")).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Edit personal goal" }));
@@ -151,7 +151,7 @@ describe("DeliveryBonusDesk", () => {
         "2026-11-28",
       );
       expect(
-        screen.getByText("Earliest payroll month · December 2026"),
+        screen.getByText("Earliest bonus month · December 2026"),
       ).toBeVisible();
       expect(screen.getByText(/Renewed IMK uploaded/)).toBeVisible();
       expect(screen.queryByRole("button", { name: /send/i })).toBeNull();
@@ -173,11 +173,11 @@ describe("DeliveryBonusDesk", () => {
     mocks.request.mockResolvedValue({ sentSub: "employee-a", data });
     render(<DeliveryBonusDesk />);
     expect(await screen.findByText("Rp 408.000")).toBeVisible();
-    expect(screen.getByText("2 awaiting payroll review")).toBeVisible();
+    expect(screen.getByText("2 · Month closed · HR review")).toBeVisible();
     expect(
       screen.getByRole("progressbar", { name: "Monthly service goal" }),
     ).toHaveAttribute("aria-valuetext", "3 qualifying services, goal 5");
-    expect(screen.getByText(/Dec 2026 payroll/)).toBeVisible();
+    expect(screen.getByText(/Dec 2026 bonuses/)).toBeVisible();
   });
   it("inspects a payroll category using only priced amounts from the payroll period", async () => {
     const data = {
@@ -199,7 +199,7 @@ describe("DeliveryBonusDesk", () => {
     fireEvent.click(approved);
     expect(approved).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Approved · 40% of this payroll total",
+      "Approved · 40% of this month's total",
     );
     fireEvent.click(approved);
     expect(approved).toHaveAttribute("aria-pressed", "false");
@@ -523,4 +523,50 @@ describe("DeliveryBonusDesk", () => {
       expect(screen.queryByText(new RegExp(slot_key!, "i"))).toBeNull();
     },
   );
+  it("lists a month awaiting payment with its gross amount and payday, and says no payroll", async () => {
+    const data = {
+      ...desk(),
+      next_case: null,
+      totals: {
+        pending: 100000,
+        approved: 240000,
+        paid: 0,
+        awaiting_rate: 0,
+        payroll_locked: 1,
+      },
+      awaiting_payment: [
+        {
+          bonus_month: "2026-11-01",
+          run_status: "approved",
+          amount_idr: 240000,
+          pending_idr: 50000,
+          expected_payday: null,
+          payday_salary_month: "2026-12-01",
+        },
+        {
+          bonus_month: "2026-12-01",
+          run_status: "open",
+          amount_idr: 90000,
+          pending_idr: 0,
+          expected_payday: "2026-12-25",
+          payday_salary_month: "2026-12-01",
+        },
+      ],
+    };
+    mocks.request.mockResolvedValue({ sentSub: "employee-a", data });
+    render(<DeliveryBonusDesk />);
+    const block = await screen.findByRole("region", {
+      name: "Awaiting payment",
+    });
+    expect(block).toHaveTextContent(
+      "November 2026 · Rp 240.000 gross · 7 days after the Dec 2026 salary is paid · Rp 50.000 still pending, not paid by this run",
+    );
+    expect(block).toHaveTextContent(
+      "December 2026 · Rp 90.000 gross · Expected 25 Dec 2026",
+    );
+    expect(block).not.toHaveTextContent(/tax|PPh/i);
+    expect(screen.getByText("Bonuses this month")).toBeVisible();
+    expect(screen.getByText("1 · Month closed · HR review")).toBeVisible();
+    expect(screen.queryByText(/payroll/i)).toBeNull();
+  });
 });

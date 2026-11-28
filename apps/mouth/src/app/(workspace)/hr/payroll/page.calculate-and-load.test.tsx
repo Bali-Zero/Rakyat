@@ -16,6 +16,7 @@ import PayrollPage from "./page";
 const hrApi = vi.hoisted(() => ({
   listPayrollPeriods: vi.fn(),
   listPayslips: vi.fn(),
+  listBonusRuns: vi.fn(),
   calculatePayroll: vi.fn(),
   approvePayroll: vi.fn(),
   markPayrollPaid: vi.fn(),
@@ -81,6 +82,7 @@ beforeEach(() => {
   who.payrollWrite = true;
   hrApi.listPayrollPeriods.mockResolvedValue({ periods: [] });
   hrApi.listPayslips.mockResolvedValue({ payslips: [] });
+  hrApi.listBonusRuns.mockResolvedValue({ runs: [] });
   hrApi.calculatePayroll.mockResolvedValue({ success: true });
   theBrowserIsAt("2026-11-15T04:00:00Z", "Asia/Makassar");
 });
