@@ -138,3 +138,71 @@ def test_an_hr_admin_reads_all_four_payslips(make_client, slip_id):
 def test_a_member_still_gets_403_for_a_colleagues_approved_payslip(make_client):
     svc = _payslip_service([_slip(6, "approved", employee_id=8)])
     assert make_client(MEMBER, svc).get("/api/hr/payslips/6").status_code == 403
+
+
+# ─── bonus runs (PR3a): approve and mark paid ────────────────────────────────────────────────────
+
+HR_ADMIN_ONLY = {"user_id": "tm-fake-9", "email": "adit@balizero.com", "role": "member"}
+RUN_BODY = {"approved_total_idr": 300000, "pending_count": 2}
+RUN_POSTS = (
+    ("/api/hr/bonus-runs/2026-11/approve", RUN_BODY),
+    ("/api/hr/bonus-runs/2026-11/mark-paid", None),
+)
+
+
+@pytest.mark.parametrize(("url", "body"), RUN_POSTS)
+def test_an_hr_admin_without_payroll_write_gets_403_on_both_run_posts(make_client, url, body):
+    svc = AsyncMock()
+    res = make_client(HR_ADMIN_ONLY, svc).post(url, json=body)
+    assert res.status_code == 403
+    assert not svc.method_calls
+
+
+@pytest.mark.parametrize("month", ["2026-13", "2026-00", "2026-1", "nov-2026", "2026-11-01"])
+@pytest.mark.parametrize("path", ["approve", "mark-paid"])
+def test_a_bad_bonus_month_is_a_422(make_client, month, path):
+    svc = AsyncMock()
+    res = make_client(ADMIN, svc).post(f"/api/hr/bonus-runs/{month}/{path}", json=RUN_BODY)
+    assert res.status_code == 422
+    assert not svc.method_calls
+
+
+def test_approving_a_run_passes_the_screen_figures_and_the_first_of_the_month(make_client):
+    svc = AsyncMock()
+    svc.approve_bonus_run = AsyncMock(
+        return_value={"run": {"status": "approved"}, "reserved_count": 3}
+    )
+    res = make_client(ADMIN, svc).post("/api/hr/bonus-runs/2026-11/approve", json=RUN_BODY)
+    assert res.status_code == 200
+    assert res.json() == {"success": True, "run": {"status": "approved"}, "reserved_count": 3}
+    from datetime import date
+
+    svc.approve_bonus_run.assert_awaited_once_with(
+        date(2026, 11, 1), "tm-admin", expected_approved_idr=300000, expected_pending=2
+    )
+
+
+@pytest.mark.parametrize("code", ["not_due", "out_of_order", "closed", "changed", "not_approved"])
+@pytest.mark.parametrize(("url", "body"), RUN_POSTS)
+def test_each_refusal_code_is_a_409_carrying_its_code(make_client, code, url, body):
+    from backend.app.services.hr.hr_service import BonusRunRefusedError
+
+    err = BonusRunRefusedError(code, "fake refusal")
+    svc = AsyncMock()
+    svc.approve_bonus_run = AsyncMock(side_effect=err)
+    svc.mark_bonus_run_paid = AsyncMock(side_effect=err)
+    res = make_client(ADMIN, svc).post(url, json=body)
+    assert res.status_code == 409
+    assert res.json() == {"detail": "fake refusal", "code": f"bonus_run_{code}"}
+
+
+def test_paying_an_unknown_run_is_a_404_and_paying_a_known_one_a_200(make_client):
+    svc = AsyncMock()
+    svc.mark_bonus_run_paid = AsyncMock(side_effect=LookupError("No bonus run for 2026-11"))
+    client = make_client(ADMIN, svc)
+    assert client.post("/api/hr/bonus-runs/2026-11/mark-paid").status_code == 404
+    svc.mark_bonus_run_paid = AsyncMock(return_value={"run": {"status": "paid"}, "paid_count": 1})
+    res = client.post("/api/hr/bonus-runs/2026-11/mark-paid")
+    assert (res.status_code, res.json()["paid_count"]) == (200, 1)
+    hr_router.invalidate_cache.assert_any_await("zantara:hr_bonuses:*")
+    hr_router.invalidate_cache.assert_any_await("zantara:hr_payroll:*")

@@ -195,6 +195,12 @@ async def _mark_applied(env: Env) -> None:
     await env.pool.execute("SELECT pg_sleep(0.02)")
 
 
+async def _roll_back_399(env: Env) -> None:
+    """399's FKs and ledger columns sit on 393's table: its rollback goes first (PR3a)."""
+    path = MIGRATION_393.with_name("399_bonus_run_payment.sql")
+    await env.pool.execute(split_migration_sql(path.read_text(encoding="utf-8"))[1])
+
+
 def _split() -> tuple[str, str]:
     return split_migration_sql(MIGRATION_393.read_text(encoding="utf-8"))
 
@@ -212,6 +218,7 @@ async def test_b8_the_rollback_refuses_with_a_run_and_otherwise_drops_the_three_
     env,
 ) -> None:
     forward, rollback = _split()
+    await _roll_back_399(env)
     async with env.pool.acquire() as conn:
         tx = conn.transaction()
         await tx.start()
@@ -238,6 +245,7 @@ async def test_b8a_the_rollback_refuses_after_a_november_receipt_booked_by_the_n
     from backend.tests.migrations.test_delivery_bonus_events_pg import _freeze
 
     await _mark_applied(env)
+    await _roll_back_399(env)
     await _pay_salary(env, 11)
     await env.pool.execute(
         "INSERT INTO hr_bonus_rates(practice_type_code, amount_idr, effective_from) "
@@ -262,6 +270,7 @@ async def test_b8b_the_rollback_refuses_after_approving_a_pre_existing_november_
 ) -> None:
     pending = await _row(env, "pending", NOV)
     await _mark_applied(env)
+    await _roll_back_399(env)
     await _pay_salary(env, 11)
     assert (await env.svc.approve_bonus(pending, env.admin))["status"] == "approved"
     await _assert_rollback_refused(env, "roll forward")
@@ -275,6 +284,7 @@ async def test_b8c_the_rollback_succeeds_when_only_pre_393_rows_exist_and_forwar
     await _row(env, "pending", NOV)
     await _row(env, "approved", NOV)
     await _mark_applied(env)
+    await _roll_back_399(env)
     await env.pool.execute(rollback)
     assert await env.pool.fetchval("SELECT to_regclass('hr_bonus_runs')") is None
     await env.pool.execute(forward)
