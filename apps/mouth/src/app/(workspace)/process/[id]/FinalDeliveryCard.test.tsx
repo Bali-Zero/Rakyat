@@ -1588,7 +1588,14 @@ describe("Final delivery", () => {
     });
     it("keeps the follow-up actions on a completed practice that is not delivered", async () => {
       requests.get.mockResolvedValue(
-        delivered({ delivery_recorded: false, bonus_event: null }),
+        delivered({
+          delivery_recorded: false,
+          bonus_event: null,
+          slots: [
+            slot("electronic_visa", "Electronic Visa", { document_id: 71 }),
+            slot("itk", "ITK", { document_id: 72, file_name: "ITK.pdf" }),
+          ], // filled and not repairable: only the follow-up permission can let the action through
+        }),
       );
       requests.post.mockResolvedValue({ ...followup, can_postpone: false });
       const { user } = setup();
@@ -1608,6 +1615,46 @@ describe("Final delivery", () => {
           { note: "Client is abroad." },
         ),
       );
+    });
+    it("never calls onComplete or claims completion after a lost repair upload on an already completed practice", async () => {
+      requests.get.mockResolvedValue(delivered());
+      requests.post.mockRejectedValue(new Error("network lost"));
+      const { user, complete } = setup();
+      await user.upload(
+        await screen.findByLabelText("Upload ITK"),
+        new File(["stay"], "stay.pdf", { type: "application/pdf" }),
+      );
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "We could not confirm this upload",
+      );
+      expect(complete).not.toHaveBeenCalled();
+      expect(screen.queryByText(/practice is completed/i)).toBeNull();
+    });
+    it("never calls onComplete or claims completion after a lost waiver on an already completed practice", async () => {
+      const waivable = conditional();
+      requests.get.mockResolvedValueOnce(waivable).mockResolvedValue({
+        ...waivable,
+        slots: [
+          waivable.slots[0],
+          slot("manpower", "Manpower", {
+            condition: "if filed separately",
+            waiver_reason: "Not filed separately",
+          }),
+        ],
+      });
+      requests.post.mockRejectedValue(new Error("network lost"));
+      const { user, complete } = setup();
+      await user.click(
+        await screen.findByRole("button", { name: "Mark as not applicable" }),
+      );
+      await user.type(
+        screen.getByLabelText("Reason this requirement does not apply"),
+        "Not filed separately",
+      );
+      await user.click(screen.getByRole("button", { name: "Save reason" }));
+      expect(await screen.findByText("Requirement updated.")).toBeVisible();
+      expect(complete).not.toHaveBeenCalled();
+      expect(screen.queryByText(/practice is completed/i)).toBeNull();
     });
     it.each([
       ["a lost response", new Error("network lost")],
@@ -1637,6 +1684,12 @@ describe("Final delivery", () => {
           new File(["issued"], "visa.pdf", { type: "application/pdf" }),
         );
         await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+        // The error stays on screen: the card follows the completion without erasing it.
+        expect(screen.getByRole("alert")).toHaveTextContent(
+          failure instanceof ApiError
+            ? "Bad gateway"
+            : "We could not confirm this upload",
+        );
         expect(screen.queryByText(/upload recorded/)).toBeNull();
         expect(screen.queryByText(/practice is completed/i)).toBeNull();
       },
