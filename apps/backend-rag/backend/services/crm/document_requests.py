@@ -397,9 +397,18 @@ _LIST_FROM = """
     FROM practice_document_requests r
     JOIN practices p ON p.id = r.practice_id
 """
+# Exactly the characters Python's str.strip() removes (those for which str.isspace() is true),
+# so the pending list reads a practice status as the first cut does. It reaches btrim as a bound
+# parameter: no escape sequence is written in SQL.
+STRIP_CHARACTERS = (
+    "\t\n\x0b\x0c\r\x1c\x1d\x1e\x1f \x85\xa0\u1680"
+    "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000"
+)
+# ``{strip}`` is the placeholder of STRIP_CHARACTERS in the query that uses the filter.
 _PENDING_FILTER = """
     WHERE r.decision = 'pending'
-      AND lower(btrim(coalesce(p.status, ''), E' \\t\\n\\r\\f\\v')) NOT IN ('cancelled', 'canceled')
+      AND lower(btrim(coalesce(p.status, ''), {strip}::text)) NOT IN ('cancelled', 'canceled')
       AND EXISTS (SELECT 1 FROM practice_required_documents d WHERE d.id = r.required_document_id)
 """
 _DECIDED_FILTER = "WHERE r.decision <> 'pending'"
@@ -461,10 +470,15 @@ async def list_requests(
 ) -> dict[str, Any]:
     """The requests to decide (``pending``) or already decided. No column of the client is read."""
     if state == "pending":
-        where, order = _PENDING_FILTER, "r.requested_at DESC, r.id DESC"
+        order = "r.requested_at DESC, r.id DESC"
+        count_where = _PENDING_FILTER.format(strip="$1")
+        where = _PENDING_FILTER.format(strip="$3")
+        strip: tuple[str, ...] = (STRIP_CHARACTERS,)
     else:
-        where, order = _DECIDED_FILTER, "r.decided_at DESC, r.id DESC"
-    total = await conn.fetchval(f"SELECT count(*) {_LIST_FROM} {where}")
+        order = "r.decided_at DESC, r.id DESC"
+        count_where = where = _DECIDED_FILTER
+        strip = ()
+    total = await conn.fetchval(f"SELECT count(*) {_LIST_FROM} {count_where}", *strip)
     rows = await conn.fetch(
         f"""
         SELECT r.id, r.practice_id, pt.name AS service_name, r.document_type, r.label,
@@ -492,6 +506,7 @@ async def list_requests(
         """,
         limit,
         offset,
+        *strip,
     )
     return {"items": [_list_item(row) for row in rows], "total": int(total or 0)}
 

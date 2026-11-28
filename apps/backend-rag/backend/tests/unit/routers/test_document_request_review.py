@@ -333,6 +333,39 @@ def test_the_list_defaults_to_pending_first_page_of_fifty(world: World) -> None:
     )
 
 
+def test_the_strip_characters_are_exactly_what_str_strip_removes() -> None:
+    """Contract 3.a: "trimmed" is what Python's str.strip() removes, no more and no less."""
+    import sys
+
+    from backend.services.crm import document_requests
+
+    python_whitespace = {chr(code) for code in range(sys.maxunicode + 1) if chr(code).isspace()}
+    assert set(document_requests.STRIP_CHARACTERS) == python_whitespace
+    assert len(document_requests.STRIP_CHARACTERS) == len(python_whitespace)
+    assert ("x" + document_requests.STRIP_CHARACTERS).strip() == "x"
+
+
+def test_both_pending_queries_receive_the_strip_characters_as_a_parameter(world: World) -> None:
+    from backend.services.crm import document_requests
+
+    assert world.get().status_code == 200
+    (count_sql, count_args) = world.conn.sql_like("count(*)")[0]
+    (items_sql, items_args) = world.conn.sql_like("ORDER BY")[0]
+    assert count_args == (document_requests.STRIP_CHARACTERS,)
+    assert items_args == (50, 0, document_requests.STRIP_CHARACTERS)
+    assert "btrim(coalesce(p.status, ''), $1::text)" in count_sql
+    assert "btrim(coalesce(p.status, ''), $3::text)" in items_sql
+    assert "E'" not in count_sql + items_sql  # no escape string in SQL
+
+
+def test_the_decided_queries_carry_no_strip_parameter(world: World) -> None:
+    assert world.get("?state=decided&limit=20&offset=40").status_code == 200
+    (count_sql, count_args) = world.conn.sql_like("count(*)")[0]
+    (items_sql, items_args) = world.conn.sql_like("ORDER BY")[0]
+    assert count_args == () and items_args == (20, 40)
+    assert "btrim" not in count_sql + items_sql
+
+
 def test_the_decided_list_is_newest_decision_first_with_its_paging(world: World) -> None:
     world.conn.rows = [_list_row(decision="case_only", decided_by=ADMIN, decided_at=WHEN)]
     response = world.get("?state=decided&limit=20&offset=40")
