@@ -415,7 +415,9 @@ async def waive(
             user["email"],
         )
         await audit(conn, practice_id, user["email"], f"Delivery slot {key} inapplicable: {reason}")
-        return await finish_on_proof(pool, conn, p, user, tasks) or await state(conn, p, user)
+        updated = await finish_on_proof(pool, conn, p, user, tasks) or await state(conn, p, user)
+    await invalidate_delivery_cache(p)
+    return updated
 
 
 def upload_digest(encoded: str, file_name: str, mime_type: str) -> str:
@@ -865,7 +867,10 @@ async def upload(
         # even if the separate combined-permit action also referenced it.
         if row["document_id"] == slot["document_id"]:
             # The exact retry of a proof an older machine accepted without completing it completes it.
-            return await finish_on_proof(pool, conn, p, user, tasks) or view
+            done = await finish_on_proof(pool, conn, p, user, tasks)
+            if done:  # it commits with this transaction; the counts refresh once it has
+                tasks.add_task(invalidate_delivery_cache, p)
+            return done or view
         if any(
             other["key"] != key and other["document_id"] == row["document_id"]
             for other in view["slots"]
@@ -1149,17 +1154,27 @@ async def complete(pool: Any, practice_id: int, user: dict, tasks: BackgroundTas
     return updated
 
 
+_SHARED_CACHES = (
+    "zantara:crm_practices:*",
+    "zantara:crm_practices_stats:*",
+    "zantara:crm_clients_stats:*",
+    "zantara:crm_practices_revenue_growth:*",
+    "zantara:hr_bonuses:*",
+)
+
+
 async def invalidate_delivery_cache(p: dict) -> None:
-    for pattern in (
-        f"zantara:crm_practice:{p['id']}:*",
-        "zantara:crm_practices:*",
-        "zantara:crm_practices_stats:*",
-        "zantara:crm_clients_stats:*",
-        "zantara:crm_practices_revenue_growth:*",
-        "zantara:hr_bonuses:*",
-        f"zantara:portal_documents:{p['client_id']}:*",
-    ):
+    await invalidate_delivery_caches([p])
+
+
+async def invalidate_delivery_caches(practices: list[dict]) -> None:
+    """The shared lists once, then each practice's own and each client's portal documents once."""
+    for pattern in _SHARED_CACHES:
         await invalidate_cache(pattern)
+    for key in sorted({f"zantara:crm_practice:{p['id']}:*" for p in practices}):
+        await invalidate_cache(key)
+    for client in sorted({p["client_id"] for p in practices}):
+        await invalidate_cache(f"zantara:portal_documents:{client}:*")
 
 
 async def portal_files(conn: Any, practice_id: int, client_id: int) -> dict:

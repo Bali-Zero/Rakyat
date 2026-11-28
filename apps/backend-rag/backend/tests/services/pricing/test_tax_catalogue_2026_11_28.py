@@ -226,3 +226,17 @@ def test_the_public_npwp_row_says_with_kitas_and_keeps_its_key_and_price() -> No
         assert "without KITAS" in row["description_en"]
     without = _block(doc)["NPWP Personal + Coretax Activation (without KITAS)"]
     assert without["price"] == "1.500.000 IDR"
+
+
+def test_the_llm_price_list_prints_the_kitas_case_of_the_npwp_service() -> None:
+    """The LLM context prints each row's name, not the key kept for lookups."""
+    from backend.services.pricing.pricing_service import PricingService
+
+    lines = PricingService().format_for_llm_context("business").splitlines()
+    assert "- NPWP Personal + Coretax Activation (with KITAS): 1.000.000 IDR" in lines
+    assert "- NPWP Personal + Coretax Activation: 1.000.000 IDR" not in lines
+    tax = PricingService().format_for_llm_context("tax").splitlines()
+    assert any(
+        line.startswith("- NPWP Personal + Coretax Activation (without KITAS): 1.500.000 IDR")
+        for line in tax
+    )

@@ -41,8 +41,12 @@ from backend.services.crm.document_requests import (
     DOCUMENT_TYPE_PATTERN,
     DocumentRequestRefused,
     create_document_request,
+    decide_request,
     derive_document_type,
+    is_card_reviewer,
+    list_requests,
     notify_reviewers_after_commit,
+    reopen_request,
 )
 from backend.services.crm.entity_search import (
     build_practice_search,
@@ -3292,6 +3296,137 @@ async def request_additional_document(
         raise
     except Exception as e:
         logger.error("Failed to request a document: %s", type(e).__name__)
+        raise handle_database_error(e)
+
+
+class DocumentRequestDecision(BaseModel):
+    """What a card reviewer decides about one request (V2, second cut)."""
+
+    decision: Literal["added_to_card", "case_only"]
+    condition: str | None = None
+    client_text: str | None = None
+
+    @field_validator("condition")
+    @classmethod
+    def _condition(cls, value: str | None) -> str | None:
+        value = (value or "").strip()
+        if len(value) > 500:
+            raise ValueError("condition is at most 500 characters")
+        return value or None
+
+    @field_validator("client_text")
+    @classmethod
+    def _client_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not 1 <= len(value) <= 2000:
+            raise ValueError("client_text is 1 to 2000 characters")
+        return value
+
+    @model_validator(mode="after")
+    def _case_only_carries_nothing(self) -> "DocumentRequestDecision":
+        if self.decision == "case_only" and (
+            self.condition is not None or self.client_text is not None
+        ):
+            raise ValueError("case_only takes no condition and no client_text")
+        return self
+
+
+# The id and the offset travel to Postgres as bigint: a larger number is a 422, not a 500.
+_BIGINT_MAX = 2**63 - 1
+
+
+def _refused_to_http(refused: DocumentRequestRefused) -> HTTPException:
+    return HTTPException(
+        status_code=404 if refused.code == "request_not_found" else 409,
+        detail={"code": refused.code, "message": refused.message},
+    )
+
+
+def _require_card_reviewer(current_user: dict) -> None:
+    # First, before any connection is taken: a non-reviewer never touches the database.
+    if not is_card_reviewer(current_user):
+        raise HTTPException(status_code=403, detail="Card reviewers only")
+
+
+@router.get("/document-requests/review")
+async def review_document_requests(
+    state: Literal["pending", "decided"] = Query("pending"),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0, le=_BIGINT_MAX),
+    current_user: dict = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """The documents consultants asked outside a service card, for the card reviewers."""
+    _require_card_reviewer(current_user)
+    try:
+        async with db_pool.acquire() as conn:
+            return await list_requests(conn, state=state, limit=limit, offset=offset)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to list document requests: %s", type(e).__name__)
+        raise handle_database_error(e)
+
+
+@router.post("/document-requests/{request_id}/decision")
+async def decide_document_request(
+    request_id: int = Path(..., gt=0, le=_BIGINT_MAX),
+    payload: DocumentRequestDecision = Body(...),
+    current_user: dict = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """Add the document to the card of its service, or keep it for that case only."""
+    _require_card_reviewer(current_user)
+    try:
+        async with db_pool.acquire() as conn:
+            try:
+                answer = await decide_request(
+                    conn,
+                    request_id,
+                    decision=payload.decision,
+                    condition=payload.condition,
+                    client_text=payload.client_text,
+                    reviewer=str(current_user.get("email") or "system"),
+                )
+            except DocumentRequestRefused as refused:
+                raise _refused_to_http(refused) from refused
+        logger.info("Document request %s decided: %s", request_id, payload.decision)
+        return answer
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to decide a document request: %s", type(e).__name__)
+        raise handle_database_error(e)
+
+
+@router.post("/document-requests/{request_id}/reopen")
+async def reopen_document_request(
+    request_id: int = Path(..., gt=0, le=_BIGINT_MAX),
+    current_user: dict = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """Put a decided request back to pending; clears the card row it created, if any."""
+    _require_card_reviewer(current_user)
+    try:
+        async with db_pool.acquire() as conn:
+            try:
+                answer = await reopen_request(
+                    conn, request_id, reviewer=str(current_user.get("email") or "system")
+                )
+            except DocumentRequestRefused as refused:
+                raise _refused_to_http(refused) from refused
+        logger.info(
+            "Document request %s reopened (card row removed: %s)",
+            request_id,
+            answer["card_document_removed"],
+        )
+        return answer
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to reopen a document request: %s", type(e).__name__)
         raise handle_database_error(e)
 
 

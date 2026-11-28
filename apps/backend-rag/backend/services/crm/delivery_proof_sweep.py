@@ -66,6 +66,7 @@ async def sweep_open_proofs(pool: Any, pages: int = 50) -> dict:
     while done < pages:
         done += 1
         notices = BackgroundTasks()
+        swept: list[dict] = []
         async with pool.acquire() as conn, conn.transaction():
             if not await conn.fetchval("SELECT pg_try_advisory_xact_lock($1)", _LOCK_KEY):
                 break  # another machine is sweeping
@@ -105,8 +106,14 @@ async def sweep_open_proofs(pool: Any, pages: int = 50) -> dict:
                     continue
                 if p is not None:
                     completed.append(practice_id)
+                    swept.append(p)
                     delivery.queue_completed(pool, p, SWEEP_ACTOR, notices)
         _cursor = ids[-1] if len(ids) == _PAGE else 0
+        if swept:  # after the page commits, once per page: the counts follow the completions
+            try:
+                await delivery.invalidate_delivery_caches(swept)
+            except Exception as exc:
+                logger.warning("first-proof sweep cache refresh failed (%s)", type(exc).__name__)
         for task in notices.tasks:  # after the page commits; a failure never undoes a completion
             try:
                 await task()

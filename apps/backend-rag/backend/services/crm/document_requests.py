@@ -26,6 +26,9 @@ import asyncpg
 
 from backend.app.core.config import settings
 from backend.app.services import internal_email
+from backend.app.utils.crm_utils import is_crm_admin
+from backend.app.utils.service_accounts import is_human_team_member
+from backend.services.crm.service_cards import seeding_armed_for
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +39,8 @@ LANGUAGES = ("en", "id")
 DEFAULT_LANGUAGE = "id"
 # The staff app, as the other internal emails of this package link to it.
 KITA_PRACTICE_URL = "https://kita.balizero.com/process/{id}"
+# The reviewers' page, linked from the email under "Open the practice".
+KITA_REVIEW_URL = "https://kita.balizero.com/review/document-requests"
 
 
 class DocumentRequestRefused(Exception):
@@ -224,6 +229,7 @@ _COPY = {
         "why": "Why",
         "seen": "Seen before",
         "open": "Open the practice",
+        "decide": "Decide in Kita",
         "foot": "The client already sees the request. Nothing changes for other practices.",
     },
     "id": {
@@ -239,6 +245,7 @@ _COPY = {
         "why": "Alasan",
         "seen": "Pernah diminta",
         "open": "Buka praktik",
+        "decide": "Putuskan di Kita",
         "foot": "Klien sudah melihat permintaan ini. Praktik lain tidak berubah.",
     },
 }
@@ -265,6 +272,7 @@ def build_email(
     )
     when = requested_at.strftime("%Y-%m-%d %H:%M UTC") if requested_at is not None else ""
     link = KITA_PRACTICE_URL.format(id=practice_id)
+    decide_link = KITA_REVIEW_URL
     service_value = e(service_name) if service_name else copy["no_service_value"]
 
     def row(label: str, value: str, block: bool = False) -> str:
@@ -287,6 +295,7 @@ def build_email(
         + row(copy["seen"], _times(seen_count, lang))
         + "</table>"
         f'<p><a href="{e(link, quote=True)}">{copy["open"]}</a></p>'
+        f'<p><a href="{e(decide_link, quote=True)}">{copy["decide"]}</a></p>'
         f'<p style="color:#6b7280;font-size:12px">{copy["foot"]}</p>'
         "</div>"
     )
@@ -367,3 +376,254 @@ async def notify_reviewers(
     except Exception as exc:
         logger.warning("document request notification failed: %s", type(exc).__name__)
         return False
+
+
+# ---------------------------------------------------------------------------------------------
+# The reviewers' side (V2, second cut): who may decide, the list, the decision, the reopen.
+# Nothing here writes a practice, a slot, or the request's own label and client text.
+# ---------------------------------------------------------------------------------------------
+
+DECISIONS = ("added_to_card", "case_only")
+_REQUEST_LOCK = """
+    SELECT id, practice_type_id, document_type, label, client_text, decision
+    FROM practice_document_requests WHERE id = $1 FOR UPDATE
+"""
+_CARD_LOCK = "SELECT practice_type_id FROM service_cards WHERE practice_type_id = $1 FOR UPDATE"
+_TOUCH_CARD = (
+    "UPDATE service_cards SET updated_by = $2, updated_at = now() WHERE practice_type_id = $1"
+)
+
+_LIST_FROM = """
+    FROM practice_document_requests r
+    JOIN practices p ON p.id = r.practice_id
+"""
+# Exactly the characters Python's str.strip() removes (those for which str.isspace() is true),
+# so the pending list reads a practice status as the first cut does. It reaches btrim as a bound
+# parameter: no escape sequence is written in SQL.
+STRIP_CHARACTERS = (
+    "\t\n\x0b\x0c\r\x1c\x1d\x1e\x1f \x85\xa0\u1680"
+    "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000"
+)
+# ``{strip}`` is the placeholder of STRIP_CHARACTERS in the query that uses the filter.
+_PENDING_FILTER = """
+    WHERE r.decision = 'pending'
+      AND lower(btrim(coalesce(p.status, ''), {strip}::text)) NOT IN ('cancelled', 'canceled')
+      AND EXISTS (SELECT 1 FROM practice_required_documents d WHERE d.id = r.required_document_id)
+"""
+_DECIDED_FILTER = "WHERE r.decision <> 'pending'"
+
+
+def is_card_reviewer(user: dict[str, Any] | None) -> bool:
+    """A CRM admin, or a person on the team whose address is an accepted entry of the setting
+    that says who is emailed. A token without an email or without a role never passes there."""
+    if not user:
+        return False
+    if is_crm_admin(user):
+        return True
+    email = str(user.get("email") or "").strip().lower()
+    if not email or not is_human_team_member(user.get("role")):
+        return False
+    accepted = {
+        address.lower()
+        for address, _lang in reviewers_from_setting(
+            getattr(settings, "service_card_reviewer_emails", "")
+        )
+    }
+    return email in accepted
+
+
+def _iso(value: Any) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+def _list_item(row: Any) -> dict[str, Any]:
+    if not row["has_card"]:
+        card_state = "no_card"
+    elif row["on_card"]:
+        card_state = "on_card"
+    else:
+        card_state = "can_add"
+    card_live = bool(row["has_card"] and row["card_active"] and seeding_armed_for(row["type_code"]))
+    return {
+        "id": row["id"],
+        "practice_id": row["practice_id"],
+        "service_name": row["service_name"],
+        "document_type": row["document_type"],
+        "label": row["label"],
+        "client_text": row["client_text"],
+        "reason": row["reason"],
+        "requested_by": row["requested_by"],
+        "requested_at": _iso(row["requested_at"]),
+        "seen_count": int(row["seen_count"] or 0),
+        "card_state": card_state,
+        "card_live": card_live,
+        "decision": row["decision"],
+        "decision_condition": row["decision_condition"],
+        "decided_by": row["decided_by"],
+        "decided_at": _iso(row["decided_at"]),
+    }
+
+
+async def list_requests(
+    conn: asyncpg.Connection, *, state: str, limit: int, offset: int
+) -> dict[str, Any]:
+    """The requests to decide (``pending``) or already decided. No column of the client is read."""
+    if state == "pending":
+        order = "r.requested_at DESC, r.id DESC"
+        count_where = _PENDING_FILTER.format(strip="$1")
+        where = _PENDING_FILTER.format(strip="$3")
+        strip: tuple[str, ...] = (STRIP_CHARACTERS,)
+    else:
+        order = "r.decided_at DESC, r.id DESC"
+        count_where = where = _DECIDED_FILTER
+        strip = ()
+    total = await conn.fetchval(f"SELECT count(*) {_LIST_FROM} {count_where}", *strip)
+    rows = await conn.fetch(
+        f"""
+        SELECT r.id, r.practice_id, pt.name AS service_name, r.document_type, r.label,
+               r.client_text, r.reason, r.requested_by, r.requested_at, r.decision,
+               r.decision_condition, r.decided_by, r.decided_at,
+               (SELECT count(*) FROM practice_document_requests e
+                 WHERE e.practice_type_id = r.practice_type_id
+                   AND e.document_type = r.document_type
+                   AND (e.requested_at < r.requested_at
+                        OR (e.requested_at = r.requested_at AND e.id < r.id))
+                   AND e.requested_at > r.requested_at - make_interval(days => {SEEN_WINDOW_DAYS})
+               ) AS seen_count,
+               (sc.practice_type_id IS NOT NULL) AS has_card,
+               coalesce(sc.active, false) AS card_active,
+               pt.code AS type_code,
+               EXISTS (SELECT 1 FROM service_card_documents cd
+                        WHERE cd.practice_type_id = r.practice_type_id
+                          AND cd.document_type = r.document_type) AS on_card
+        {_LIST_FROM}
+        LEFT JOIN practice_types pt ON pt.id = r.practice_type_id
+        LEFT JOIN service_cards sc ON sc.practice_type_id = r.practice_type_id
+        {where}
+        ORDER BY {order}
+        LIMIT $1 OFFSET $2
+        """,
+        limit,
+        offset,
+        *strip,
+    )
+    return {"items": [_list_item(row) for row in rows], "total": int(total or 0)}
+
+
+async def _lock_request(conn: asyncpg.Connection, request_id: int) -> Any:
+    row = await conn.fetchrow(_REQUEST_LOCK, request_id)
+    if row is None:
+        raise DocumentRequestRefused("request_not_found", "Document request not found")
+    return row
+
+
+async def decide_request(
+    conn: asyncpg.Connection,
+    request_id: int,
+    *,
+    decision: str,
+    condition: str | None,
+    client_text: str | None,
+    reviewer: str,
+) -> dict[str, Any]:
+    """Decide one request in ONE transaction; locks in the order request, card, card documents.
+
+    Raises ``DocumentRequestRefused`` (``request_not_found`` / ``already_decided`` / ``no_card`` /
+    ``already_on_card``); the transaction is then rolled back and nothing is written.
+    """
+    async with conn.transaction():
+        request = await _lock_request(conn, request_id)
+        if request["decision"] != "pending":
+            raise DocumentRequestRefused("already_decided", "This request was already decided.")
+        type_id = request["practice_type_id"]
+        kept_condition = condition if decision == "added_to_card" else None
+        if decision == "added_to_card":
+            if type_id is None or await conn.fetchrow(_CARD_LOCK, type_id) is None:
+                raise DocumentRequestRefused("no_card", "This service has no card to add to.")
+            inserted = await conn.fetchrow(
+                """
+                INSERT INTO service_card_documents
+                    (practice_type_id, document_type, label, client_text, provider,
+                     condition_text, reuse, source, source_request_id, sort_order, active,
+                     created_by)
+                VALUES ($1, $2, $3, $4, 'client', $5, 'fresh', 'request', $6,
+                        (SELECT COALESCE(MAX(sort_order), 0) + 1
+                           FROM service_card_documents WHERE practice_type_id = $1),
+                        true, $7)
+                ON CONFLICT (practice_type_id, document_type) DO NOTHING
+                RETURNING id
+                """,
+                type_id,
+                request["document_type"],
+                request["label"],
+                client_text if client_text is not None else request["client_text"],
+                condition,
+                request_id,
+                reviewer,
+            )
+            if inserted is None:
+                raise DocumentRequestRefused(
+                    "already_on_card", "This document is already on the card."
+                )
+        updated = await conn.fetchrow(
+            """
+            UPDATE practice_document_requests
+            SET decision = $2, decision_condition = $3, decided_by = $4, decided_at = now()
+            WHERE id = $1
+            RETURNING id, decision, decision_condition, decided_by, decided_at
+            """,
+            request_id,
+            decision,
+            kept_condition,
+            reviewer,
+        )
+        if decision == "added_to_card":
+            await conn.execute(_TOUCH_CARD, type_id, reviewer)
+        # Built inside the transaction: nothing that can fail runs after the commit.
+        answer = {
+            "id": updated["id"],
+            "decision": updated["decision"],
+            "decision_condition": updated["decision_condition"],
+            "decided_by": updated["decided_by"],
+            "decided_at": updated["decided_at"].isoformat(),
+        }
+    return answer
+
+
+async def reopen_request(
+    conn: asyncpg.Connection, request_id: int, *, reviewer: str
+) -> dict[str, Any]:
+    """Put a decided request back to pending; removes the card row this request created, and
+    only that one. Same lock order as a decision, so the two cannot deadlock."""
+    removed = False
+    async with conn.transaction():
+        request = await _lock_request(conn, request_id)
+        if request["decision"] == "pending":
+            raise DocumentRequestRefused("not_decided", "This request is not decided.")
+        if request["decision"] == "added_to_card":
+            type_id = request["practice_type_id"]
+            if type_id is not None:
+                await conn.fetchrow(_CARD_LOCK, type_id)
+            deleted = await conn.fetch(
+                """
+                DELETE FROM service_card_documents
+                WHERE source = 'request' AND source_request_id = $1
+                RETURNING id, practice_type_id
+                """,
+                request_id,
+            )
+            removed = bool(deleted)
+            if removed:
+                await conn.execute(_TOUCH_CARD, deleted[0]["practice_type_id"], reviewer)
+        await conn.fetchrow(
+            """
+            UPDATE practice_document_requests
+            SET decision = 'pending', decision_condition = NULL, decided_by = NULL,
+                decided_at = NULL
+            WHERE id = $1
+            RETURNING id
+            """,
+            request_id,
+        )
+    return {"id": request_id, "decision": "pending", "card_document_removed": removed}
