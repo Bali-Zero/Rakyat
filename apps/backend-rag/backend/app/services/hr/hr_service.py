@@ -1570,9 +1570,12 @@ class HRService:
                ORDER BY f.practice_id FOR SHARE OF f, e""",
             as_of,
         )
+        # EVERY employee row, not only the payroll set (as the salary roster check does): a concurrent card
+        # or login edit that puts someone on payroll after the figures compare would otherwise be reserved
+        # unconfirmed. The edit's row lock then waits for this commit.
         await conn.execute(
-            f"SELECT e.id FROM hr_employees e JOIN team_members tm ON tm.id = e.team_member_id "
-            f"WHERE {payroll_set_sql()} FOR SHARE OF e, tm"
+            "SELECT e.id FROM hr_employees e JOIN team_members tm ON tm.id = e.team_member_id "
+            "ORDER BY e.id FOR SHARE OF e, tm"
         )
         await _lock_bonus_month(conn, month.month, month.year, exclusive=True)
         if await conn.fetchval("SELECT 1 FROM hr_bonus_runs WHERE bonus_month = $1", month):

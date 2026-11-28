@@ -781,7 +781,8 @@ class BonusRunApproval(BaseModel):
     pending_count: int = Field(ge=0)
 
 
-_BONUS_MONTH = Path(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="YYYY-MM")
+# 2000-2099, like PayrollCalculateRequest.year: a year outside it is a 422, never a 500
+_BONUS_MONTH = Path(pattern=r"^20\d{2}-(0[1-9]|1[0-2])$", description="YYYY-MM")
 
 
 def _first_of(bonus_month: str) -> date:

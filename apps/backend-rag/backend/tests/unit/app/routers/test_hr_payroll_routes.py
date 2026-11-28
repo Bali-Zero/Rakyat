@@ -206,3 +206,24 @@ def test_paying_an_unknown_run_is_a_404_and_paying_a_known_one_a_200(make_client
     assert (res.status_code, res.json()["paid_count"]) == (200, 1)
     hr_router.invalidate_cache.assert_any_await("zantara:hr_bonuses:*")
     hr_router.invalidate_cache.assert_any_await("zantara:hr_payroll:*")
+
+
+@pytest.mark.parametrize("month", ["0000-11", "1999-12", "9999-12", "2100-01"])
+@pytest.mark.parametrize("path", ["approve", "mark-paid"])
+def test_a_year_outside_2000_2099_is_a_422_not_a_500(make_client, month, path):
+    svc = AsyncMock()
+    res = make_client(ADMIN, svc).post(f"/api/hr/bonus-runs/{month}/{path}", json=RUN_BODY)
+    assert res.status_code == 422
+    assert not svc.method_calls
+
+
+def test_a_month_that_has_not_ended_is_a_409_not_due_before_any_database_work(make_client):
+    from backend.app.services.hr.hr_service import HRService
+
+    pool = MagicMock()
+    res = make_client(ADMIN, HRService(pool)).post(
+        "/api/hr/bonus-runs/2099-12/approve", json=RUN_BODY
+    )
+    assert res.status_code == 409
+    assert res.json()["code"] == "bonus_run_not_due"
+    assert not pool.method_calls

@@ -497,6 +497,43 @@ async def test_13_approval_holds_the_bonus_month_exclusively(env: Env, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_14b_a_reactivation_after_the_compare_cannot_enter_the_run(
+    env: Env, monkeypatch
+) -> None:
+    """The run locks every employee row: putting an off-payroll person back waits for the run's commit."""
+    _today(monkeypatch, "2026-12-01")
+    await _off_payroll(env, env.emp_id, True)
+    row = await _row(env, "approved", NOV)  # off payroll: the screen confirms 0
+    paused, release = asyncio.Event(), asyncio.Event()
+    real = hr_service._run_figures
+
+    async def figures_then_pause(conn, month, as_of):
+        out = await real(conn, month, as_of)
+        paused.set()
+        await release.wait()
+        return out
+
+    monkeypatch.setattr(hr_service, "_run_figures", figures_then_pause)
+    run = asyncio.create_task(
+        env.svc.approve_bonus_run(NOV1, env.admin, expected_approved_idr=0, expected_pending=0)
+    )
+    await asyncio.wait_for(paused.wait(), 5)
+    try:
+        with pytest.raises(
+            asyncpg.exceptions.LockNotAvailableError
+        ):  # quick pool: lock_timeout 200 ms
+            await env.quick.db_pool.execute(
+                "UPDATE hr_employees SET profile = '{}'::jsonb WHERE id = $1", env.emp_id
+            )
+    finally:
+        release.set()
+    result = await run
+    assert result["reserved_count"] == 0
+    assert (await _state(env, row))["bonus_run_id"] is None
+    await _off_payroll(env, env.emp_id, False)  # after the commit the edit goes through
+
+
+@pytest.mark.asyncio
 async def test_14_two_concurrent_approvals_close_the_month_once(env: Env, monkeypatch) -> None:
     _today(monkeypatch, "2026-12-01")
     a = await _row(env, "approved", NOV)
