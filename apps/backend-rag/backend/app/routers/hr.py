@@ -43,6 +43,7 @@ from backend.app.services.hr.hr_service import (
     PayrollBonusesChangedError,
     PayrollRosterChangedError,
     business_today,
+    list_bonus_runs,
 )
 from backend.app.utils.crm_utils import is_crm_admin
 from backend.app.utils.hr_utils import (
@@ -787,6 +788,18 @@ _BONUS_MONTH = Path(pattern=r"^20\d{2}-(0[1-9]|1[0-2])$", description="YYYY-MM")
 
 def _first_of(bonus_month: str) -> date:
     return date(int(bonus_month[:4]), int(bonus_month[5:7]), 1)
+
+
+@router.get("/bonus-runs")
+async def get_bonus_runs(
+    current_user: dict[str, Any] = Depends(get_current_user),
+    db_pool: asyncpg.Pool = Depends(get_database_pool),
+) -> dict[str, Any]:
+    """Every bonus month from Nov 2026 with its run state, figures and expected payday (gross only)."""
+    _require_hr_admin(current_user)
+    async with db_pool.acquire() as conn:
+        async with conn.transaction(isolation="repeatable_read", readonly=True):
+            return {"runs": await list_bonus_runs(conn, business_today())}
 
 
 @router.post("/bonus-runs/{bonus_month}/approve")
