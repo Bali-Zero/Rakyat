@@ -7,6 +7,7 @@ import PayrollPage from "./page";
 const hrApiMock = vi.hoisted(() => ({
   listPayrollPeriods: vi.fn(),
   listPayslips: vi.fn(),
+  listBonusRuns: vi.fn(),
   calculatePayroll: vi.fn(),
   approvePayroll: vi.fn(),
   markPayrollPaid: vi.fn(),
@@ -26,6 +27,7 @@ describe("payroll approve", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     capsState.payrollWrite = true;
+    hrApiMock.listBonusRuns.mockResolvedValue({ runs: [] });
     hrApiMock.listPayrollPeriods.mockResolvedValue({
       periods: [
         {
@@ -109,5 +111,50 @@ describe("payroll approve", () => {
     expect(
       screen.getByRole("button", { name: /Mark Paid/ }),
     ).toBeInTheDocument();
+  });
+});
+
+describe("payroll page bonus runs", () => {
+  const bonusRun = {
+    bonus_month: "2026-11-01",
+    status: "open",
+    ended: false,
+    can_approve: false,
+    approved_at: null,
+    approved_by: null,
+    paid_at: null,
+    approved_total_idr: 0,
+    approved_count: 0,
+    pending_count: 0,
+    pending_total_idr: 0,
+    held_count: 0,
+    held_total_idr: 0,
+    expected_payday: null,
+    payday_salary_month: "2026-12-01",
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capsState.payrollWrite = true;
+    hrApiMock.listPayrollPeriods.mockResolvedValue({ periods: [] });
+  });
+
+  it("lists the bonus months below the periods, with no payday and a disabled Approve before 1 Dec", async () => {
+    hrApiMock.listBonusRuns.mockResolvedValue({ runs: [bonusRun] });
+    render(<PayrollPage />);
+    expect(await screen.findByText("November 2026")).toBeVisible();
+    expect(screen.getByText("Payday known once the month ends")).toBeVisible();
+    expect(screen.getByRole("button", { name: /Approve run/ })).toBeDisabled();
+  });
+
+  it("says the runs could not be loaded and still shows the periods when listBonusRuns fails", async () => {
+    hrApiMock.listBonusRuns.mockRejectedValue(new Error("down"));
+    render(<PayrollPage />);
+    expect(
+      await screen.findByText("The bonus runs could not be loaded."),
+    ).toBeVisible();
+    expect(
+      screen.getByText("No payroll periods yet.", { exact: false }),
+    ).toBeVisible();
   });
 });

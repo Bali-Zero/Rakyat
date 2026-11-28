@@ -88,6 +88,8 @@ export interface Bonus {
   practice_id: number | null;
   employee_id: number;
   payroll_period_id: number | null;
+  /** The bonus run (first of the month) that pays this row; null before the run or for older rows. */
+  bonus_run_id?: string | null;
   bonus_rate_id: number | null;
   practice_type_code: string;
   amount_idr: number;
@@ -168,6 +170,28 @@ export interface PayrollPeriod {
   notes: string | null;
   payslip_count: number;
   total_net: number;
+}
+
+/** One bonus month from Nov 2026: gross amounts only (bonuses carry no tax). Oldest first from the API. */
+export interface BonusRun {
+  /** First of the month, YYYY-MM-DD. */
+  bonus_month: string;
+  status: "open" | "approved" | "paid";
+  ended: boolean;
+  can_approve: boolean;
+  approved_at: string | null;
+  approved_by: string | null;
+  paid_at: string | null;
+  approved_total_idr: number;
+  approved_count: number;
+  pending_count: number;
+  pending_total_idr: number;
+  held_count: number;
+  held_total_idr: number;
+  /** YYYY-MM-DD, or null while the salary it waits on is unpaid. */
+  expected_payday: string | null;
+  /** First of the salary month the payday waits on, YYYY-MM-DD. */
+  payday_salary_month: string;
 }
 
 export interface Payslip {

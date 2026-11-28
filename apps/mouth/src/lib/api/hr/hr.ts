@@ -9,6 +9,7 @@ import type { CredentialedResponse } from "@/lib/api/types/api-client.types";
 import type {
   AdminDashboard,
   Bonus,
+  BonusRun,
   BonusHistoricalRecord,
   BonusRate,
   BonusPracticeType,
@@ -344,6 +345,21 @@ export const markPayrollPaid = (periodId: number) =>
     `${BASE}/payroll/${periodId}/mark-paid`,
     {},
   );
+
+// Bonus runs: a closed bonus month is approved and paid by its own run (gross, no tax).
+export const listBonusRuns = () =>
+  api.get<{ runs: BonusRun[] }>(`${BASE}/bonus-runs`);
+/** Payroll writers only. Sends the figures the screen showed; 409 `bonus_run_changed` when they moved. */
+export const approveBonusRun = (
+  month: string,
+  figures: { approved_total_idr: number; pending_count: number },
+) =>
+  api.post<{ success: boolean }>(
+    `${BASE}/bonus-runs/${month}/approve`,
+    figures,
+  );
+export const markBonusRunPaid = (month: string) =>
+  api.post<{ success: boolean }>(`${BASE}/bonus-runs/${month}/mark-paid`, {});
 
 // Leave Types — backend /leave/types returns active rows only,
 // projected to the columns the dropdown needs.

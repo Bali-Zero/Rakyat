@@ -13,7 +13,8 @@ import { toast } from "sonner";
 import * as hrApi from "@/lib/api/hr/hr";
 import { workDayOf } from "@/lib/format/work-day";
 import { useHrCapabilities } from "@/lib/hr/use-hr-capabilities";
-import type { PayrollPeriod, Payslip } from "@/types/hr";
+import type { BonusRun, PayrollPeriod, Payslip } from "@/types/hr";
+import { BonusRuns } from "./_components/bonus-runs";
 import { Money } from "@balizero/core";
 
 /** Dashboard panel recipe — mirrors the day/dark-aware Kita surfaces. */
@@ -58,6 +59,8 @@ function closedStatusOf(
 
 export default function PayrollPage() {
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
+  // Bonus runs load beside the periods; null = not read (failed), never an empty list.
+  const [bonusRuns, setBonusRuns] = useState<BonusRun[] | null>(null);
   const [payslips, setPayslips] = useState<Payslip[]>([]);
   const { capabilities, loaded } = useHrCapabilities();
   const isAdmin = capabilities.hr_admin;
@@ -70,6 +73,14 @@ export default function PayrollPage() {
   const [calculating, setCalculating] = useState(false);
   const [, renderAgain] = useState(0);
 
+  const loadBonusRuns = useCallback(async () => {
+    try {
+      setBonusRuns((await hrApi.listBonusRuns()).runs ?? []);
+    } catch {
+      setBonusRuns(null);
+    }
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     setLoadFailed(false);
@@ -77,6 +88,7 @@ export default function PayrollPage() {
       if (isAdmin) {
         const data = await hrApi.listPayrollPeriods();
         setPeriods(data.periods || []);
+        await loadBonusRuns();
       } else {
         const data = await hrApi.listPayslips();
         setPayslips(data.payslips || []);
@@ -86,7 +98,7 @@ export default function PayrollPage() {
     } finally {
       setLoading(false);
     }
-  }, [isAdmin]);
+  }, [isAdmin, loadBonusRuns]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -281,6 +293,20 @@ export default function PayrollPage() {
               </div>
             ))}
           </div>
+        )}
+
+        {bonusRuns === null ? (
+          <p role="alert" className="text-sm text-[var(--bz-text-3)]">
+            The bonus runs could not be loaded.
+          </p>
+        ) : (
+          bonusRuns.length > 0 && (
+            <BonusRuns
+              runs={bonusRuns}
+              canWrite={canRunPayroll}
+              onChanged={() => void loadBonusRuns()}
+            />
+          )
         )}
       </div>
     );

@@ -14,9 +14,11 @@ import * as hrApi from "@/lib/api/hr/hr";
 import type {
   Bonus,
   BonusHistoricalRecord,
+  BonusRun,
   BonusPracticeType,
   HREmployee,
 } from "@/types/hr";
+import { bonusDayLabel, bonusPaydayText } from "@/lib/hr/bonus-run-format";
 import {
   aggregateByMember,
   bonusesToCsv,
@@ -66,9 +68,27 @@ function downloadCsv(filename: string, csv: string): void {
   URL.revokeObjectURL(url);
 }
 
+/** One chip per month that has a bonus run state (Nov 2026 on); none before, and none while the month is still open. */
+function BonusRunChip({ run }: { run: BonusRun | undefined }) {
+  if (!run || (run.status === "open" && !run.ended)) return null;
+  const text =
+    run.status === "paid"
+      ? `Paid ${run.paid_at ? bonusDayLabel(run.paid_at) : ""}`.trim()
+      : run.status === "approved"
+        ? `Awaiting payment · ${bonusPaydayText(run.expected_payday, run.payday_salary_month)}`
+        : "Run to approve";
+  return (
+    <span className="text-xs px-2 py-0.5 rounded-full border border-[var(--bz-border)] text-[var(--bz-text-2)]">
+      {text}
+    </span>
+  );
+}
+
 export default function BonusesPage() {
   const [bonuses, setBonuses] = useState<Bonus[]>([]);
   const [historical, setHistorical] = useState<BonusHistoricalRecord[]>([]);
+  // Bonus runs by YYYY-MM. A failed read leaves no chip; the page does not depend on it.
+  const [runs, setRuns] = useState<Map<string, BonusRun>>(new Map());
   const [loading, setLoading] = useState(true);
   const [year, setYear] = useState<string>(ALL);
   const [status, setStatus] = useState<string>(ALL);
@@ -108,6 +128,12 @@ export default function BonusesPage() {
   useEffect(() => {
     async function load() {
       await loadBonuses();
+      try {
+        const data = await hrApi.listBonusRuns();
+        setRuns(new Map(data.runs.map((r) => [r.bonus_month.slice(0, 7), r])));
+      } catch {
+        setRuns(new Map());
+      }
       try {
         // HR-admin only. Team members get a 403 and the reconciliation strip
         // simply stays hidden for them.
@@ -614,6 +640,7 @@ export default function BonusesPage() {
                       </span>
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
+                      <BonusRunChip run={runs.get(month.key)} />
                       {month.pendingTotal > 0 && (
                         <span className="text-xs px-2 py-0.5 rounded-full border bg-[color-mix(in_srgb,var(--state-warning)_12%,transparent)] text-[var(--state-warning)] border-[color-mix(in_srgb,var(--state-warning)_30%,transparent)]">
                           <Money value={month.pendingTotal} /> pending
