@@ -718,6 +718,18 @@
   },
   {
    "file": "app/services/hr/hr_service.py",
+   "function": "HRService._approve_bonus_run_tx",
+   "target": "logger.info",
+   "message": "'Bonus run %s approved: %s rows reserved'",
+   "args": [
+    "month",
+    "totals['reserved_count']"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/services/hr/hr_service.py",
    "function": "HRService._my_attendance",
    "target": "logger.warning",
    "message": "'my overview: clock-in view unreadable (%s)'",
@@ -788,6 +800,17 @@
    "args": [
     "row['id']",
     "employee_id"
+   ],
+   "fields": {},
+   "exc_info": null
+  },
+  {
+   "file": "app/services/hr/hr_service.py",
+   "function": "HRService.mark_bonus_run_paid",
+   "target": "logger.info",
+   "message": "'Bonus run %s marked paid'",
+   "args": [
+    "month"
    ],
    "fields": {},
    "exc_info": null

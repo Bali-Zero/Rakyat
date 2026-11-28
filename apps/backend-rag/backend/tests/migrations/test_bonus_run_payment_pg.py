@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -549,6 +550,116 @@ async def test_14_two_concurrent_approvals_close_the_month_once(env: Env, monkey
     assert (await _state(env, a))["bonus_run_id"] == NOV1
 
 
+async def _pause_after_compare(env: Env, monkeypatch, *, approved: int, pending: int = 0):
+    """Start a November approval that stops right after the figures compare; returns (task, release)."""
+    paused, release = asyncio.Event(), asyncio.Event()
+    real = hr_service._run_figures
+
+    async def figures_then_pause(conn, month, as_of):
+        out = await real(conn, month, as_of)
+        paused.set()
+        await release.wait()
+        return out
+
+    monkeypatch.setattr(hr_service, "_run_figures", figures_then_pause)
+    task = asyncio.create_task(
+        env.svc.approve_bonus_run(
+            NOV1, env.admin, expected_approved_idr=approved, expected_pending=pending
+        )
+    )
+    await asyncio.wait_for(paused.wait(), 5)
+    return task, release
+
+
+@pytest.mark.asyncio
+async def test_14c_the_run_holds_the_allocation_lock_against_a_concurrent_approval(
+    env: Env, monkeypatch
+) -> None:
+    """An earlier-month deferred row approved mid-run would change what the run was confirmed on."""
+    _today(monkeypatch, "2026-12-01")
+    deferred = await env.pool.fetchval(
+        "INSERT INTO hr_bonus_ledger (employee_id, practice_type_code, amount_idr, status, awarded_at,"
+        " source, reason, deferred_from) VALUES ($1,'manual',100000,'pending',$2,'manual','why',$3)"
+        " RETURNING id",
+        env.emp_id,
+        OCT,
+        date(2026, 10, 1),
+    )
+    task, release = await _pause_after_compare(env, monkeypatch, approved=0, pending=1)
+    try:
+        with pytest.raises(asyncpg.exceptions.LockNotAvailableError):
+            await env.quick.approve_bonus(deferred, env.admin)
+    finally:
+        release.set()
+    assert (await task)["reserved_count"] == 0
+    assert (await _state(env, deferred))["status"] == "pending"
+    assert (await env.quick.approve_bonus(deferred, env.admin))["status"] == "approved"
+
+
+@pytest.mark.asyncio
+async def test_14d_the_run_locks_the_followups_it_read(env: Env, monkeypatch) -> None:
+    """Fulfilling or postponing a follow-up mid-run would change who is held after the compare."""
+    _today(monkeypatch, "2026-12-01")
+    practice = await _open_followup(env.pool, env.emp_id, date(2026, 10, 1))
+    row = await _row(env, "approved", NOV)  # held by the open follow-up: the screen confirms 0
+    task, release = await _pause_after_compare(env, monkeypatch, approved=0)
+    try:
+        with pytest.raises(asyncpg.exceptions.LockNotAvailableError):
+            await env.quick.db_pool.execute(
+                "UPDATE practice_visa_followups SET fulfilled_at=now() WHERE practice_id=$1",
+                practice,
+            )
+    finally:
+        release.set()
+    assert (await task)["reserved_count"] == 0
+    assert (await _state(env, row))["deferred_from"] == NOV1
+    await _fulfil(env, practice)  # after the commit the edit goes through
+
+
+@pytest.mark.asyncio
+async def test_a_december_row_reserved_by_a_pre_399_salary_never_enters_a_run(env: Env) -> None:
+    await _roll_back_399(env)  # the state before 399: the salary carries and reserves its bonus
+    row = await _row(env, "approved", DEC)
+    period = (await env.svc.calculate_payroll(12, 2026, env.admin))["period_id"]
+    await env.svc.approve_payroll(period, env.admin)
+    reserved = await env.pool.fetchval(
+        "SELECT payroll_period_id FROM hr_bonus_ledger WHERE id=$1", row
+    )
+    assert reserved == period
+    await env.pool.execute(_parts()[0])  # 399 arrives
+    inputs = await env.pool.fetch(
+        "SELECT bonus_id FROM hr_bonus_run_inputs('2026-12-01','2027-01-02')"
+    )
+    assert row not in {r["bonus_id"] for r in inputs}
+
+
+@pytest.mark.asyncio
+async def test_a_hold_bound_to_a_run_is_no_salary_hold_for_a_retroactive_month(
+    env: Env, monkeypatch
+) -> None:
+    _today(monkeypatch, "2026-12-20")
+    practice = await _open_followup(
+        env.pool, env.emp_id, date(2026, 8, 1)
+    )  # payable from September
+    await _row(env, "approved", NOV)
+    await _run(env)  # the November run binds the hold to itself
+    oct_row = await _row(env, "approved", OCT)
+    result = await env.svc.calculate_payroll(10, 2026, env.admin)  # retroactive pre-November salary
+    slip = await env.pool.fetchval(
+        "SELECT bonus_total_idr FROM hr_payslips WHERE payroll_period_id=$1 AND employee_id=$2",
+        result["period_id"],
+        env.emp_id,
+    )
+    assert slip == 100_000  # the run-bound hold withholds nothing from it
+    await env.svc.approve_payroll(result["period_id"], env.admin)
+    hold = await env.pool.fetchrow(
+        "SELECT payroll_period_id, bonus_run_id FROM hr_visa_bonus_hold_periods WHERE practice_id=$1",
+        practice,
+    )
+    assert (hold["payroll_period_id"], hold["bonus_run_id"]) == (None, NOV1)
+    assert (await _state(env, oct_row))["payroll_period_id"] == result["period_id"]
+
+
 # ─── 15: the 399 rollback ──────────────────────────────────────────────────────────────────────
 
 
@@ -813,6 +924,13 @@ async def test_18_a_concurrent_delivery_writer_never_meets_a_deadlock(
     )
 
 
+def _failed_fast(started: float) -> None:
+    """The refusal came from the try-lock or NOWAIT, not from the runner's 2 s lock_timeout."""
+    assert time.monotonic() - started < 1.0, (
+        "waited on a lock: the prologue is not taking them NOWAIT"
+    )
+
+
 @pytest.mark.asyncio
 async def test_18b_a_busy_writer_gives_a_55p03_migration_error_and_no_half_state(
     env: Env, monkeypatch
@@ -823,8 +941,10 @@ async def test_18b_a_busy_writer_gives_a_55p03_migration_error_and_no_half_state
     practice = await _booking_setup(env, monkeypatch)
     writer, tx = await _open_writer(_schema_dsn(), practice)
     try:
+        started = time.monotonic()
         with pytest.raises(MigrationError) as busy:
             await _migration().apply(database_url=_schema_dsn(), dedicated=False)
+        _failed_fast(started)
         assert isinstance(busy.value.__cause__, asyncpg.exceptions.LockNotAvailableError)
     finally:
         await tx.rollback()
@@ -832,8 +952,10 @@ async def test_18b_a_busy_writer_gives_a_55p03_migration_error_and_no_half_state
     async with _BonusHold(
         env.pool, "hr_bonus_payout_allocation", exclusive=False
     ):  # an open approve_bonus
+        started = time.monotonic()
         with pytest.raises(MigrationError) as busy:
             await _migration().apply(database_url=_schema_dsn(), dedicated=False)
+        _failed_fast(started)
         assert isinstance(busy.value.__cause__, asyncpg.exceptions.LockNotAvailableError)
     assert not await _has_column(env)
     assert not await env.pool.fetchval(
@@ -843,8 +965,10 @@ async def test_18b_a_busy_writer_gives_a_55p03_migration_error_and_no_half_state
     writer, tx = await _open_writer(_schema_dsn(), practice)  # a rollback behind a writer
     manager = MigrationManager(_schema_dsn(), dedicated=False)
     try:
+        started = time.monotonic()
         with pytest.raises(MigrationError) as busy:
             await manager.rollback_migration("399_bonus_run_payment")
+        _failed_fast(started)
         assert isinstance(busy.value.__cause__, asyncpg.exceptions.LockNotAvailableError)
     finally:
         await tx.rollback()

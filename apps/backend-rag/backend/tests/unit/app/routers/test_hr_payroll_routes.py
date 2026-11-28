@@ -142,7 +142,21 @@ def test_a_member_still_gets_403_for_a_colleagues_approved_payslip(make_client):
 
 # ─── bonus runs (PR3a): approve and mark paid ────────────────────────────────────────────────────
 
-HR_ADMIN_ONLY = {"user_id": "tm-fake-9", "email": "adit@balizero.com", "role": "member"}
+HR_ADMIN_ONLY = {"user_id": "tm-fake-9", "email": "hr-admin@example.test", "role": "member"}
+
+
+@pytest.fixture(autouse=True)
+def _synthetic_hr_admin(monkeypatch):
+    """An HR admin who is not a payroll writer, by a synthetic address (no staff identity in Rakyat)."""
+    from backend.app.utils import hr_utils
+
+    monkeypatch.setattr(
+        hr_utils,
+        "HR_EXTRA_ADMIN_EMAILS",
+        hr_utils.HR_EXTRA_ADMIN_EMAILS | {"hr-admin@example.test"},
+    )
+
+
 RUN_BODY = {"approved_total_idr": 300000, "pending_count": 2}
 RUN_POSTS = (
     ("/api/hr/bonus-runs/2026-11/approve", RUN_BODY),

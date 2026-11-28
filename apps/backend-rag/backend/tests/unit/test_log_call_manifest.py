@@ -281,7 +281,7 @@ def test_manifest_counts_per_file():
         "app/routers/crm_clients.py": 23,
         "app/routers/crm_practices.py": 38,
         "services/crm/client_core.py": 39,
-        "app/services/hr/hr_service.py": 14,
+        "app/services/hr/hr_service.py": 16,
         "app/routers/hr_my_late_incident.py": 1,
     }
 
