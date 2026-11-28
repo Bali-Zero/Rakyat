@@ -985,6 +985,92 @@
         "tier_range": null
       }
     },
+    "tax_accounting.standalone_services": {
+      "NPWP Personal + Coretax Activation (without KITAS)": {
+        "category": "tax_accounting.standalone_services",
+        "key": "NPWP Personal + Coretax Activation (without KITAS)",
+        "name": "NPWP Personal + Coretax Activation (without KITAS)",
+        "price": "1.500.000 IDR",
+        "duration": "",
+        "validity": "",
+        "notes": "Per person.",
+        "description_en": "Personal Indonesian tax ID (NPWP) issuance with activation on the Coretax platform, for a person without a KITAS.",
+        "icon_id": "consultant-npwp",
+        "tier_range": null
+      },
+      "Electronic Certificate (SERTEL)": {
+        "category": "tax_accounting.standalone_services",
+        "key": "Electronic Certificate (SERTEL)",
+        "name": "Electronic Certificate (SERTEL)",
+        "price": "1.000.000 IDR",
+        "duration": "",
+        "validity": "",
+        "notes": "",
+        "description_en": "Issuance of the electronic certificate (SERTEL) used to sign tax filings on Coretax.",
+        "icon_id": "consultant-update",
+        "tier_range": null
+      },
+      "Coretax Activation — Personal": {
+        "category": "tax_accounting.standalone_services",
+        "key": "Coretax Activation — Personal",
+        "name": "Coretax Activation — Personal",
+        "price": "1.000.000 IDR",
+        "duration": "",
+        "validity": "",
+        "notes": "",
+        "description_en": "Stand-alone Coretax activation for an existing personal NPWP.",
+        "icon_id": "consultant-update",
+        "tier_range": null
+      },
+      "Coretax Activation — Company": {
+        "category": "tax_accounting.standalone_services",
+        "key": "Coretax Activation — Company",
+        "name": "Coretax Activation — Company",
+        "price": "1.000.000 IDR",
+        "duration": "",
+        "validity": "",
+        "notes": "",
+        "description_en": "Stand-alone Coretax activation for an existing company NPWP.",
+        "icon_id": "consultant-update",
+        "tier_range": null
+      },
+      "Tax Office (KPP) Accompaniment": {
+        "category": "tax_accounting.standalone_services",
+        "key": "Tax Office (KPP) Accompaniment",
+        "name": "Tax Office (KPP) Accompaniment",
+        "price": "1.000.000 IDR",
+        "duration": "",
+        "validity": "",
+        "notes": "",
+        "description_en": "Accompaniment to the tax office (KPP) for a visit or a filing at the counter.",
+        "icon_id": "consultant-update",
+        "tier_range": null
+      },
+      "Groundwater Tax (ABT) Registration": {
+        "category": "tax_accounting.standalone_services",
+        "key": "Groundwater Tax (ABT) Registration",
+        "name": "Groundwater Tax (ABT) Registration",
+        "price": "2.500.000 IDR",
+        "duration": "",
+        "validity": "",
+        "notes": "",
+        "description_en": "Registration of a site for the groundwater tax (ABT) with the regional tax authority.",
+        "icon_id": "consultant-npwpd",
+        "tier_range": null
+      },
+      "Tax Meeting": {
+        "category": "tax_accounting.standalone_services",
+        "key": "Tax Meeting",
+        "name": "Tax Meeting",
+        "price": "1.000.000 IDR",
+        "duration": "",
+        "validity": "",
+        "notes": "",
+        "description_en": "Tax meeting with a tax consultant, with a written summary.",
+        "icon_id": "consultant-update",
+        "tier_range": null
+      }
+    },
     "company_services": {
       "New Company (PT PMA)": {
         "category": "company_services",
@@ -1186,12 +1272,12 @@
       "NPWP Personal + Coretax Activation": {
         "category": "consultant_services",
         "key": "NPWP Personal + Coretax Activation",
-        "name": "NPWP Personal + Coretax Activation",
+        "name": "NPWP Personal + Coretax Activation (with KITAS)",
         "price": "1.000.000 IDR",
         "duration": "",
         "validity": "",
         "notes": "Per person.",
-        "description_en": "Personal Indonesian tax ID (NPWP) issuance with activation on the Coretax platform.",
+        "description_en": "Personal Indonesian tax ID (NPWP) issuance with activation on the Coretax platform, for a person with a KITAS. For a person without a KITAS see \"NPWP Personal + Coretax Activation (without KITAS)\".",
         "icon_id": "consultant-npwp",
         "tier_range": null
       },
