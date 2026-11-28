@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import logging
 import re
 from collections.abc import AsyncIterator
 from datetime import date, datetime, timezone
@@ -449,25 +448,36 @@ async def test_15c_the_rollback_refuses_a_december_approval_that_straddles_the_m
     await _row(env, "pending", DEC)
     period = (await env.svc.calculate_payroll(12, 2026, env.admin))["period_id"]
     forward = _parts()[0]
-    async with env.pool.acquire() as t:
+    async with env.pool.acquire() as t:  # T1/T3: every await on either connection is bounded
         tx = t.transaction()
-        await tx.start()
+        await asyncio.wait_for(tx.start(), BOUND)
         try:
-            await t.fetchval("SELECT now()")
-            await env.pool.execute(forward)  # 399 applies and commits while T is open
-            await env.pool.execute(
-                "CREATE TABLE _schema_versions (id serial PRIMARY KEY, migration_name text UNIQUE, "
-                "migration_number int NOT NULL, executed_at timestamptz DEFAULT now())"
+            await asyncio.wait_for(t.fetchval("SELECT now()"), BOUND)
+            # 399 applies and commits while T is open
+            await asyncio.wait_for(env.pool.execute(forward), BOUND)
+            await asyncio.wait_for(
+                env.pool.execute(
+                    "CREATE TABLE _schema_versions (id serial PRIMARY KEY, migration_name text UNIQUE, "
+                    "migration_number int NOT NULL, executed_at timestamptz DEFAULT now())"
+                ),
+                BOUND,
             )
-            await env.pool.execute(
-                "INSERT INTO _schema_versions(migration_name, migration_number) "
-                "VALUES ('399_bonus_run_payment', 399)"
+            await asyncio.wait_for(
+                env.pool.execute(
+                    "INSERT INTO _schema_versions(migration_name, migration_number) "
+                    "VALUES ('399_bonus_run_payment', 399)"
+                ),
+                BOUND,
             )
-            await t.execute("UPDATE hr_payroll_periods SET status='approved' WHERE id=$1", period)
-            await tx.commit()
+            await asyncio.wait_for(
+                t.execute("UPDATE hr_payroll_periods SET status='approved' WHERE id=$1", period),
+                BOUND,
+            )
+            await asyncio.wait_for(tx.commit(), BOUND)
         finally:
             if t.is_in_transaction():
-                await tx.rollback()
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(tx.rollback(), BOUND)
     assert await env.pool.fetchval(
         "SELECT approved_at < (SELECT executed_at FROM _schema_versions) FROM hr_payroll_periods"
     )
@@ -634,16 +644,19 @@ async def _open_writer(dsn: str, practice: int) -> AsyncIterator[tuple[asyncpg.C
             raise
 
 
-class _FirstRefusal(logging.Handler):
-    """Sets `seen` on the runner's first lock-timeout record (the 55P03 retry the runner logs)."""
+class _FirstRefusal:
+    """Sets `seen` on the runner's first refused attempt: the retry loop asks for its backoff only after a
+    55P03. A spy on the module function, so the signal holds whatever the logging configuration is."""
 
-    def __init__(self) -> None:
-        super().__init__(logging.INFO)
+    def __init__(self, monkeypatch) -> None:  # noqa: ANN001
         self.seen = asyncio.Event()
+        real = mb._lock_retry_backoff_seconds
 
-    def emit(self, record: logging.LogRecord) -> None:
-        if "lock timeout on attempt" in record.getMessage():
+        def spy(attempt: int) -> float:
             self.seen.set()
+            return real(attempt)
+
+        monkeypatch.setattr(mb, "_lock_retry_backoff_seconds", spy)
 
 
 async def _until_the_migrator_met_the_lock(
@@ -678,10 +691,7 @@ async def _reap(task: asyncio.Task) -> None:
 async def test_18_a_concurrent_delivery_writer_never_meets_a_deadlock(
     env: Env, monkeypatch
 ) -> None:
-    refusal = _FirstRefusal()
-    logger = logging.getLogger("backend.db.migration_base")
-    logger.setLevel(logging.INFO)
-    logger.addHandler(refusal)
+    refusal = _FirstRefusal(monkeypatch)
     runner = None
     try:
         await _roll_back_399(env)
@@ -706,7 +716,6 @@ async def test_18_a_concurrent_delivery_writer_never_meets_a_deadlock(
             await asyncio.wait_for(tx.commit(), BOUND)
             assert await asyncio.wait_for(asyncio.shield(runner), BOUND * 2) is True
     finally:
-        logger.removeHandler(refusal)
         if runner is not None:
             await _reap(runner)
     assert refusal.seen.is_set()
@@ -775,6 +784,12 @@ async def test_18b_a_busy_writer_gives_a_55p03_migration_error_and_no_half_state
         async with _open_writer(_schema_dsn(), practice):  # a rollback behind a writer
             await _refused_by_a_lock_that_does_not_wait(
                 manager.rollback_migration("399_bonus_run_payment")
+            )
+        async with _BonusHold(
+            env.pool, "hr_bonus_payout_allocation", exclusive=False
+        ):  # a rollback behind an open approve_bonus: the repeated prologue's try-lock
+            await _refused_by_a_lock_that_does_not_wait(
+                manager.rollback_migration("399_bonus_run_payment"), raised=ALLOCATION_BUSY
             )
     finally:
         await asyncio.wait_for(manager.close(), BOUND)

@@ -5,6 +5,8 @@ Same schema and pools as test_hr_bonus_payroll_locks (real 068 triggers, migrati
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -29,6 +31,7 @@ MIGRATION_393 = (
     Path(__file__).resolve().parents[2] / "db" / "migrations_v2" / "393_bonus_run_month_lock.sql"
 )
 NOV = datetime(2026, 11, 10, 4, 0, tzinfo=timezone.utc)
+HOLD_BOUND = 15  # seconds: every await of a hold on its own connection (the 399 tests' BOUND)
 
 
 async def _row(
@@ -71,21 +74,34 @@ async def _pay_salary(env: Env, month: int, year: int = 2026) -> int:
 
 
 class _BonusHold:
-    """An open transaction holding a month key, as an in-flight request would."""
+    """An open transaction holding a month key, as an in-flight request would.
+
+    Every await is bounded, and the connection goes back to the pool on every exit path, a failure or a
+    cancellation while the key is still being taken included."""
 
     def __init__(self, pool: asyncpg.Pool, key: str, *, exclusive: bool = True):
         self.pool, self.key, self.exclusive = pool, key, exclusive
 
     async def __aenter__(self) -> None:
-        self.conn = await self.pool.acquire()
+        self.conn = await asyncio.wait_for(self.pool.acquire(), HOLD_BOUND)
         self.tx = self.conn.transaction()
-        await self.tx.start()
-        fn = "pg_advisory_xact_lock" if self.exclusive else "pg_advisory_xact_lock_shared"
-        await self.conn.execute(f"SELECT {fn}(hashtext($1))", self.key)
+        try:
+            await asyncio.wait_for(self.tx.start(), HOLD_BOUND)
+            fn = "pg_advisory_xact_lock" if self.exclusive else "pg_advisory_xact_lock_shared"
+            await asyncio.wait_for(
+                self.conn.execute(f"SELECT {fn}(hashtext($1))", self.key), HOLD_BOUND
+            )
+        except BaseException:
+            await self._close()
+            raise
 
     async def __aexit__(self, *exc: object) -> None:
-        await self.tx.rollback()
-        await self.pool.release(self.conn)
+        await self._close()
+
+    async def _close(self) -> None:
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(self.tx.rollback(), HOLD_BOUND)
+        await self.pool.release(self.conn, timeout=HOLD_BOUND)
 
 
 @pytest.mark.asyncio

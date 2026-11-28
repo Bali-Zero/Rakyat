@@ -129,12 +129,16 @@ async def _snap(env: Env, ids, *, drop=()) -> list[dict]:
 async def _forward(env: Env, sql: str | None = None) -> list[str]:
     """Run 400's forward on one connection and return its NOTICE messages."""
     notices: list[str] = []
+
+    def listen(_c: object, msg: object) -> None:
+        notices.append(msg.message)
+
     async with env.pool.acquire() as conn:
-        conn.add_log_listener(lambda _c, msg: notices.append(msg.message))
+        conn.add_log_listener(listen)
         try:
             await conn.execute(sql or _parts()[0])
         finally:
-            conn.remove_log_listener(notices.append)
+            conn.remove_log_listener(listen)  # the same callable, or a pooled connection keeps it
     return notices
 
 
@@ -166,7 +170,24 @@ async def _hold(pool: asyncpg.Pool, key: str, *, exclusive: bool = True):
     finally:
         with contextlib.suppress(Exception):
             await asyncio.wait_for(tx.rollback(), BOUND)
-        await asyncio.wait_for(pool.release(conn), BOUND)
+        await pool.release(conn, timeout=BOUND)  # release shields its reset: bound it from inside
+
+
+@contextlib.asynccontextmanager
+async def _row_held(pool: asyncpg.Pool, row_id: int):
+    """A writer holding one ledger row FOR UPDATE, bounded and released like `_hold`."""
+    conn = await asyncio.wait_for(pool.acquire(), BOUND)
+    tx = conn.transaction()
+    try:
+        await asyncio.wait_for(tx.start(), BOUND)
+        await asyncio.wait_for(
+            conn.fetchval("SELECT id FROM hr_bonus_ledger WHERE id=$1 FOR UPDATE", row_id), BOUND
+        )
+        yield
+    finally:
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(tx.rollback(), BOUND)
+        await pool.release(conn, timeout=BOUND)
 
 
 # ─── 1: exact ──────────────────────────────────────────────────────────────────────────────────
@@ -272,6 +293,19 @@ async def test_2d_an_id_above_644_is_a_notice_and_changes_nothing(env: Env) -> N
     await env.pool.execute("UPDATE hr_bonus_ledger SET id = 700 WHERE id=$1", ids[-1])
     assert await _o3(env) == COUNT  # count and sum still match: only the id differs
     await _nothing_closed(env, await _forward(env))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("top, closes", [(644, True), (645, False)])
+async def test_2d2_the_id_bound_is_644_inclusive(env: Env, top: int, closes: bool) -> None:
+    ids = await _seed(env)
+    assert ids[-1] <= top  # ascending ids: the last one is the highest
+    await env.pool.execute("UPDATE hr_bonus_ledger SET id = $2 WHERE id=$1", ids[-1], top)
+    notices = await _forward(env)
+    if closes:
+        assert await _marked(env) == (COUNT, TOTAL)
+    else:
+        await _nothing_closed(env, notices)
 
 
 @pytest.mark.asyncio
@@ -442,19 +476,8 @@ async def test_6b_a_candidate_row_locked_elsewhere_gives_55p03_and_changes_nothi
     env: Env,
 ) -> None:
     ids = await _seed(env)
-    holder = await env.pool.acquire()
-    tx = holder.transaction()
-    try:
-        await tx.start()
-        await asyncio.wait_for(
-            holder.fetchval("SELECT id FROM hr_bonus_ledger WHERE id=$1 FOR UPDATE", ids[100]),
-            BOUND,
-        )
+    async with _row_held(env.pool, ids[100]):
         await _refused(_parts()[0], relation="hr_bonus_ledger")
-    finally:
-        with contextlib.suppress(Exception):
-            await asyncio.wait_for(tx.rollback(), BOUND)
-        await env.pool.release(holder)
     assert await _o3(env) == COUNT
     assert await _marked(env) == (0, 0)
     await _no_stray_advisory_locks(env)
@@ -487,19 +510,8 @@ async def test_6d_the_rollback_never_waits_either(env: Env) -> None:
         r["id"]
         for r in await env.pool.fetch("SELECT id FROM hr_bonus_ledger WHERE notes=$1", MARKER)
     ]
-    holder = await env.pool.acquire()  # a marked row locked by a writer
-    tx = holder.transaction()
-    try:
-        await tx.start()
-        await asyncio.wait_for(
-            holder.fetchval("SELECT id FROM hr_bonus_ledger WHERE id=$1 FOR UPDATE", ids[50]),
-            BOUND,
-        )
+    async with _row_held(env.pool, ids[50]):  # a marked row locked by a writer
         await _refused(_parts()[1], relation="hr_bonus_ledger")
-    finally:
-        with contextlib.suppress(Exception):
-            await asyncio.wait_for(tx.rollback(), BOUND)
-        await env.pool.release(holder)
     assert await _marked(env) == (COUNT, TOTAL)
     await _no_stray_advisory_locks(env)
 
