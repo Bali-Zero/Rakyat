@@ -653,3 +653,26 @@ async def test_9_closing_the_rows_pays_nothing_again_and_moves_no_total(
     # "my bonuses" lists them with the same amounts, only the status word moves
     mine = await env.pool.fetch(hr_service.HRService._MY_BONUSES_SQL, env.emp_id, 2026)
     assert {r["status"] for r in mine} == {"paid"}
+
+
+# ─── 10: the boundary of 399's paid-without-payout CHECK, in Bali time ───────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_10_399s_check_admits_a_paid_row_with_no_payout_only_before_november_in_bali_time(
+    env: Env,
+) -> None:
+    """400 relies on ck_hr_bonus_paid_has_payout: 23:59:59.999999 WITA on Oct 31 may be paid with no period and
+    no run, 00:00 WITA on Nov 1 may not (a UTC cut, a December cut or no cut would each flip one of the two)."""
+    last_oct = await _decoy(
+        env, "approved", datetime(2026, 10, 31, 15, 59, 59, 999999, tzinfo=timezone.utc)
+    )
+    first_nov = await _decoy(env, "approved", datetime(2026, 10, 31, 16, 0, tzinfo=timezone.utc))
+    await env.pool.execute("UPDATE hr_bonus_ledger SET status='paid' WHERE id=$1", last_oct)
+    with pytest.raises(asyncpg.exceptions.CheckViolationError, match="ck_hr_bonus_paid_has_payout"):
+        await env.pool.execute("UPDATE hr_bonus_ledger SET status='paid' WHERE id=$1", first_nov)
+    rows = await env.pool.fetch(
+        "SELECT id, status FROM hr_bonus_ledger WHERE id = ANY($1::bigint[]) ORDER BY id",
+        [last_oct, first_nov],
+    )
+    assert [(r["id"], r["status"]) for r in rows] == [(last_oct, "paid"), (first_nov, "approved")]
