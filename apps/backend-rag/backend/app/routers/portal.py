@@ -1122,6 +1122,50 @@ async def get_timeline(
 # ================================================
 
 
+# The statement of GET /process/required-documents, a module-level constant so the
+# Postgres test runs the very text the route sends.
+# The two LATERAL joins read staff data only to name who asked for a slot: the RESULT
+# carries the newest request's requested_at and the member's name, and no other column of
+# practice_document_requests or team_members (a staff address must never reach a client;
+# the request's requested_by is read inside the join only). LIMIT 1 on both means a second
+# request row on one slot, or two members with one address, cannot double a slot.
+REQUIRED_DOCUMENTS_SQL = """
+    SELECT
+        prd.id, prd.practice_id, prd.document_type, prd.document_label,
+        prd.description, prd.is_required, prd.uploaded_by_client,
+        -- team_member_notes is DELIBERATELY not selected: it is the
+        -- operator's internal note (authoring UI labels it "Team Notes"
+        -- / "Add notes for the team..."). The client-facing note is
+        -- `description`, which the portal already renders.
+        prd.status, prd.client_notes,
+        COALESCE(pt.name, p.practice_type_code) as process_name,
+        p.status as process_status,
+        cr.requested_at AS case_requested_at,
+        cm.name AS case_added_by_name
+    FROM practice_required_documents prd
+    JOIN practices p ON prd.practice_id = p.id
+    LEFT JOIN practice_types pt ON p.practice_type_id = pt.id
+    LEFT JOIN LATERAL (
+        SELECT r.requested_at, r.requested_by
+        FROM practice_document_requests r
+        WHERE r.practice_id = prd.practice_id AND r.required_document_id = prd.id
+        ORDER BY r.id DESC
+        LIMIT 1
+    ) cr ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT tm.name
+        FROM team_members tm
+        WHERE lower(tm.email) = lower(cr.requested_by)
+          AND tm.role IS DISTINCT FROM 'client'
+        ORDER BY tm.id
+        LIMIT 1
+    ) cm ON TRUE
+    WHERE p.client_id = $1 AND p.status != 'cancelled'
+    ORDER BY (cr.requested_at IS NOT NULL AND prd.status IN ('pending', 'rejected')) DESC,
+             prd.is_required DESC, prd.created_at DESC
+"""
+
+
 @router.get("/process/required-documents")
 async def get_required_documents(
     client: dict = Depends(get_current_client),
@@ -1138,28 +1182,10 @@ async def get_required_documents(
     client_id = client["client_id"]
     try:
         async with db_pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT
-                    prd.id, prd.practice_id, prd.document_type, prd.document_label,
-                    prd.description, prd.is_required, prd.uploaded_by_client,
-                    -- team_member_notes is DELIBERATELY not selected: it is the
-                    -- operator's internal note (authoring UI labels it "Team Notes"
-                    -- / "Add notes for the team..."). The client-facing note is
-                    -- `description`, which the portal already renders.
-                    prd.status, prd.client_notes,
-                    COALESCE(pt.name, p.practice_type_code) as process_name,
-                    p.status as process_status
-                FROM practice_required_documents prd
-                JOIN practices p ON prd.practice_id = p.id
-                LEFT JOIN practice_types pt ON p.practice_type_id = pt.id
-                WHERE p.client_id = $1 AND p.status != 'cancelled'
-                ORDER BY prd.is_required DESC, prd.created_at DESC
-                """,
-                client_id,
-            )
-        items = [
-            {
+            rows = await conn.fetch(REQUIRED_DOCUMENTS_SQL, client_id)
+        items = []
+        for row in rows:
+            item = {
                 "id": row["id"],
                 "practice_id": row["practice_id"],
                 "process_name": row["process_name"],
@@ -1172,8 +1198,15 @@ async def get_required_documents(
                 "status": row["status"],
                 "client_notes": row["client_notes"],
             }
-            for row in rows
-        ]
+            asked_at = row.get("case_requested_at")
+            if asked_at is not None:
+                # Only the member's house name travels, never an address.
+                name = (row.get("case_added_by_name") or "").strip()
+                item["case_request"] = {
+                    "added_by": name if name and "@" not in name else None,
+                    "added_at": asked_at.isoformat(),
+                }
+            items.append(item)
         return {"success": True, "data": items}
     except Exception as e:
         logger.error(

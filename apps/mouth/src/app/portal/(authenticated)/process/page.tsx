@@ -27,6 +27,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { ClientRequiredDocument } from "@/lib/types/required-documents";
+import { dayMonth } from "@/lib/document-request-format";
 
 // Lazy: FileUploadField only renders when user clicks upload (not first paint)
 const FileUploadField = dynamic(
@@ -557,6 +558,19 @@ function ProcessCard({
                       style={{ color: "var(--bz-text-2)" }}
                     >
                       {doc.description}
+                    </p>
+                  )}
+                  {doc.case_request && (
+                    <p
+                      className="text-xs mt-1"
+                      style={{ color: "var(--bz-text-2)" }}
+                    >
+                      {doc.case_request.added_by?.trim()
+                        ? `${doc.case_request.added_by.trim()} added this for your case`
+                        : "Added for your case"}
+                      {dayMonth(doc.case_request.added_at)
+                        ? ` · ${dayMonth(doc.case_request.added_at)}`
+                        : ""}
                     </p>
                   )}
                   <div className="flex items-center gap-2 mt-2">
