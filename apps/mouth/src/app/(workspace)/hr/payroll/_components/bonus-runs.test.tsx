@@ -56,6 +56,33 @@ describe("bonus runs on the payroll page", () => {
     expect(screen.queryByRole("button", { name: /Mark paid/ })).toBeNull();
   });
 
+  it("keeps Approve run disabled for an ended month while an earlier one is open, and says why", () => {
+    render(
+      <BonusRuns
+        runs={[run({ can_approve: false })]}
+        canWrite
+        onChanged={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /Approve run/ })).toBeDisabled();
+    expect(screen.getByText("Close the earlier month first.")).toBeVisible();
+  });
+
+  it("lists the newest month first", () => {
+    render(
+      <BonusRuns
+        runs={[run(), run({ bonus_month: "2026-12-01", ended: false })]}
+        canWrite
+        onChanged={vi.fn()}
+      />,
+    );
+    expect(
+      screen
+        .getAllByText(/^(November|December) 2026$/)
+        .map((e) => e.textContent),
+    ).toEqual(["December 2026", "November 2026"]);
+  });
+
   it("disables Approve run before the month ends and says why", () => {
     render(
       <BonusRuns
@@ -127,6 +154,7 @@ describe("bonus runs on the payroll page", () => {
         "The month changed: review it again",
       ),
     );
+    expect(toast.success).not.toHaveBeenCalled();
     expect(onChanged).toHaveBeenCalled();
   });
 

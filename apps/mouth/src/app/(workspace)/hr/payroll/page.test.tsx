@@ -8,6 +8,8 @@ const hrApiMock = vi.hoisted(() => ({
   listPayrollPeriods: vi.fn(),
   listPayslips: vi.fn(),
   listBonusRuns: vi.fn(),
+  approveBonusRun: vi.fn(),
+  markBonusRunPaid: vi.fn(),
   calculatePayroll: vi.fn(),
   approvePayroll: vi.fn(),
   markPayrollPaid: vi.fn(),
@@ -145,6 +147,41 @@ describe("payroll page bonus runs", () => {
     expect(await screen.findByText("November 2026")).toBeVisible();
     expect(screen.getByText("Payday known once the month ends")).toBeVisible();
     expect(screen.getByRole("button", { name: /Approve run/ })).toBeDisabled();
+  });
+
+  it("shows no Approve run or Mark paid to an HR admin who is not a payroll writer", async () => {
+    capsState.payrollWrite = false;
+    hrApiMock.listBonusRuns.mockResolvedValue({
+      runs: [
+        { ...bonusRun, status: "approved", ended: true },
+        {
+          ...bonusRun,
+          bonus_month: "2026-12-01",
+          ended: true,
+          can_approve: true,
+        },
+      ],
+    });
+    render(<PayrollPage />);
+    expect(await screen.findByText("December 2026")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Approve run/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Mark paid/ })).toBeNull();
+  });
+
+  it("reloads the runs after an approval", async () => {
+    vi.mocked(window.confirm).mockReturnValue(true);
+    hrApiMock.approveBonusRun.mockResolvedValue({ success: true });
+    hrApiMock.listBonusRuns.mockResolvedValue({
+      runs: [{ ...bonusRun, ended: true, can_approve: true }],
+    });
+    render(<PayrollPage />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Approve run/ }),
+    );
+    await waitFor(() => expect(hrApiMock.approveBonusRun).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(hrApiMock.listBonusRuns).toHaveBeenCalledTimes(2),
+    );
   });
 
   it("says the runs could not be loaded and still shows the periods when listBonusRuns fails", async () => {

@@ -82,7 +82,8 @@ describe("bonuses page: one chip per bonus run month", () => {
   it("shows Paid, Awaiting payment and Run to approve, and none for October 2026", async () => {
     hrApiMock.listBonusRuns.mockResolvedValue({
       runs: [
-        run("2026-11-01", { status: "paid", paid_at: "2026-12-26T05:00:00Z" }),
+        // 00:30 WITA on 26 Dec: the UTC day would read 25 Dec
+        run("2026-11-01", { status: "paid", paid_at: "2026-12-25T16:30:00Z" }),
         run("2026-12-01", {
           status: "approved",
           expected_payday: "2027-01-25",
@@ -107,6 +108,20 @@ describe("bonuses page: one chip per bonus run month", () => {
     ).toBeVisible();
     expect(
       within(sectionOf(/October 2026/)).queryByText(
+        /Run to approve|Awaiting payment|Paid \d/,
+      ),
+    ).toBeNull();
+  });
+
+  it("shows no chip for a month that is still running", async () => {
+    hrApiMock.listBonusRuns.mockResolvedValue({
+      runs: [run("2026-11-01", { ended: false, can_approve: false })],
+    });
+    render(<BonusesPage />);
+    await screen.findByRole("button", { name: /November 2026/ });
+    await waitFor(() => expect(hrApiMock.listBonusRuns).toHaveBeenCalled());
+    expect(
+      within(sectionOf(/November 2026/)).queryByText(
         /Run to approve|Awaiting payment|Paid \d/,
       ),
     ).toBeNull();
