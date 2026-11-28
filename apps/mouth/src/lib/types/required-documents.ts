@@ -82,6 +82,8 @@ export interface ClientRequiredDocument {
   uploaded_by_client: boolean;
   status: DocumentStatus;
   client_notes: string | null;
+  /** Present only on a slot a consultant's request created: who added it, and when. */
+  case_request?: { added_by: string | null; added_at: string } | null;
 }
 
 // Predefined document types for selection
