@@ -16,6 +16,7 @@ import asyncio
 import contextlib
 import logging
 import re
+from collections.abc import AsyncIterator
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -139,12 +140,15 @@ async def _run_holds(env: Env, month: date, as_of: str) -> set[int]:
 async def _no_stray_advisory_locks(env: Env) -> None:
     """T3: no session of this database holds an advisory lock, bar the fixture's own session lock."""
     key = "r2-hr-bonus-locks-357"
-    left = await env.pool.fetch(
-        "SELECT l.pid, l.classid, l.objid FROM pg_locks l WHERE l.locktype='advisory' AND l.granted "
-        "AND l.database=(SELECT oid FROM pg_database WHERE datname=current_database()) "
-        "AND l.pid<>pg_backend_pid() AND NOT (l.classid::bigint=((hashtext($1)::bigint >> 32) & 4294967295) "
-        "AND l.objid::bigint=(hashtext($1)::bigint & 4294967295))",
-        key,
+    left = await asyncio.wait_for(
+        env.pool.fetch(
+            "SELECT l.pid, l.classid, l.objid FROM pg_locks l WHERE l.locktype='advisory' AND l.granted "
+            "AND l.database=(SELECT oid FROM pg_database WHERE datname=current_database()) "
+            "AND l.pid<>pg_backend_pid() AND NOT (l.classid::bigint=((hashtext($1)::bigint >> 32) & 4294967295) "
+            "AND l.objid::bigint=(hashtext($1)::bigint & 4294967295))",
+            key,
+        ),
+        BOUND,
     )
     assert not left, f"advisory locks left behind: {[dict(r) for r in left]}"
 
@@ -607,24 +611,57 @@ async def _booking_setup(env: Env, monkeypatch) -> int:
     )
 
 
-async def _open_writer(dsn: str, practice: int) -> tuple[asyncpg.Connection, object]:
-    conn = await asyncpg.connect(dsn)
+@contextlib.asynccontextmanager
+async def _open_writer(dsn: str, practice: int) -> AsyncIterator[tuple[asyncpg.Connection, object]]:
+    """A delivery writer holding its locks; T3: connection and transaction are released on EVERY exit path,
+    including an error or a cancellation while it is still being opened. Every await is bounded."""
+    conn = await asyncio.wait_for(asyncpg.connect(dsn), BOUND)
     tx = conn.transaction()
-    await tx.start()
-    await conn.fetchval("SELECT id FROM practices WHERE id=$1 FOR UPDATE", practice)
-    await bonus.get_delivery_bonus(conn, practice)
-    return conn, tx
+    try:
+        await asyncio.wait_for(tx.start(), BOUND)
+        await asyncio.wait_for(
+            conn.fetchval("SELECT id FROM practices WHERE id=$1 FOR UPDATE", practice), BOUND
+        )
+        await asyncio.wait_for(bonus.get_delivery_bonus(conn, practice), BOUND)
+        yield conn, tx
+    finally:
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(tx.rollback(), BOUND)
+        try:
+            await asyncio.wait_for(conn.close(), BOUND)
+        except BaseException:
+            conn.terminate()
+            raise
 
 
-async def _wait_for_migrator_lock(env: Env, cap: float = 1.5) -> None:
-    """Resume the writer when another backend waits on a lock (the migrator), or after `cap` seconds."""
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + cap
-    while loop.time() < deadline:
-        if await env.pool.fetchval(
-            "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock' "
-            "AND datname=current_database() AND pid<>pg_backend_pid()"
-        ):
+class _FirstRefusal(logging.Handler):
+    """Sets `seen` on the runner's first lock-timeout record (the 55P03 retry the runner logs)."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.INFO)
+        self.seen = asyncio.Event()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        if "lock timeout on attempt" in record.getMessage():
+            self.seen.set()
+
+
+async def _until_the_migrator_met_the_lock(
+    env: Env, refusal: _FirstRefusal, writer_pid: int
+) -> None:
+    """Return only on an OBSERVED signal: the runner logged its first 55P03 retry, or another backend (the
+    migrator, whatever its application name) is seen waiting on a lock. A clock never lets the test advance:
+    the caller bounds this with `wait_for`, and a timeout fails the test."""
+    while not refusal.seen.is_set():
+        waiting = await asyncio.wait_for(
+            env.pool.fetchval(
+                "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock' "
+                "AND datname=current_database() AND pid<>pg_backend_pid() AND pid<>$1",
+                writer_pid,
+            ),
+            BOUND,
+        )
+        if waiting:
             return
         await asyncio.sleep(0.05)
 
@@ -639,38 +676,40 @@ async def _reap(task: asyncio.Task) -> None:
 
 @pytest.mark.asyncio
 async def test_18_a_concurrent_delivery_writer_never_meets_a_deadlock(
-    env: Env, monkeypatch, caplog
+    env: Env, monkeypatch
 ) -> None:
-    caplog.set_level(logging.INFO, logger="backend.db.migration_base")
-    await _roll_back_399(env)
-    await _seed_393_ledger(env)
-    practice = await _booking_setup(env, monkeypatch)
-    writer, tx = await _open_writer(_schema_dsn(), practice)
+    refusal = _FirstRefusal()
+    logger = logging.getLogger("backend.db.migration_base")
+    logger.setLevel(logging.INFO)
+    logger.addHandler(refusal)
     runner = None
     try:
-        runner = asyncio.create_task(
-            _migration().apply(database_url=_schema_dsn(), dedicated=False)
-        )
-        await _wait_for_migrator_lock(
-            env
-        )  # with the prologue it never waits: the 1.5 s cap applies
-        booked = await asyncio.wait_for(
-            bonus.record_delivery_bonus(
-                writer, practice, "visa_demo", "fake.a@example.com", "service_delivered"
-            ),
-            BOUND,
-        )
-        assert booked["status"] == "pending"
-        await asyncio.sleep(1.0)
-        await tx.commit()
-        assert await asyncio.wait_for(asyncio.shield(runner), BOUND * 2) is True
+        await _roll_back_399(env)
+        await _seed_393_ledger(env)
+        practice = await _booking_setup(env, monkeypatch)
+        async with _open_writer(_schema_dsn(), practice) as (writer, tx):
+            runner = asyncio.create_task(
+                _migration().apply(database_url=_schema_dsn(), dedicated=False)
+            )
+            # The writer resumes only once the migrator has met its lock (or waits on it): with the
+            # prologue it is refused at once; without it, it waits and the writer deadlocks. No clock.
+            await asyncio.wait_for(
+                _until_the_migrator_met_the_lock(env, refusal, writer.get_server_pid()), BOUND
+            )
+            booked = await asyncio.wait_for(
+                bonus.record_delivery_bonus(
+                    writer, practice, "visa_demo", "fake.a@example.com", "service_delivered"
+                ),
+                BOUND,
+            )
+            assert booked["status"] == "pending"
+            await asyncio.wait_for(tx.commit(), BOUND)
+            assert await asyncio.wait_for(asyncio.shield(runner), BOUND * 2) is True
     finally:
+        logger.removeHandler(refusal)
         if runner is not None:
             await _reap(runner)
-        with contextlib.suppress(Exception):
-            await tx.rollback()
-        await writer.close()
-    assert any("lock timeout on attempt" in r.getMessage() for r in caplog.records)
+    assert refusal.seen.is_set()
     assert await env.pool.fetchval("SELECT count(*) FROM hr_bonus_ledger") == 1
     assert await _has_column(env)
     assert (
@@ -711,15 +750,10 @@ async def test_18b_a_busy_writer_gives_a_55p03_migration_error_and_no_half_state
     await _roll_back_399(env)
     await _seed_393_ledger(env)
     practice = await _booking_setup(env, monkeypatch)
-    writer, tx = await _open_writer(_schema_dsn(), practice)
-    try:
+    async with _open_writer(_schema_dsn(), practice):
         await _refused_by_a_lock_that_does_not_wait(
             _migration().apply(database_url=_schema_dsn(), dedicated=False)
         )
-    finally:
-        with contextlib.suppress(Exception):
-            await tx.rollback()
-        await writer.close()
     async with _BonusHold(
         env.pool, "hr_bonus_payout_allocation", exclusive=False
     ):  # an open approve_bonus
@@ -737,16 +771,13 @@ async def test_18b_a_busy_writer_gives_a_55p03_migration_error_and_no_half_state
         is True
     )
     manager = MigrationManager(_schema_dsn(), dedicated=False)
-    writer, tx = await _open_writer(_schema_dsn(), practice)  # a rollback behind a writer
     try:
-        await _refused_by_a_lock_that_does_not_wait(
-            manager.rollback_migration("399_bonus_run_payment")
-        )
+        async with _open_writer(_schema_dsn(), practice):  # a rollback behind a writer
+            await _refused_by_a_lock_that_does_not_wait(
+                manager.rollback_migration("399_bonus_run_payment")
+            )
     finally:
-        with contextlib.suppress(Exception):
-            await tx.rollback()
-        await writer.close()
-        await manager.close()
+        await asyncio.wait_for(manager.close(), BOUND)
     assert await _has_column(env)
     await _no_stray_advisory_locks(env)
 
