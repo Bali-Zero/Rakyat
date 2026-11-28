@@ -305,7 +305,7 @@ export const SERVICES_DATA: Record<string, ServiceData> = {
     packages: [
       {
         name: "NPWP Personal + Coretax",
-        description: "Personal tax ID registration",
+        description: "Personal tax ID registration, for a person with a KITAS",
         price: "Check live pricing",
         features: [
           "Personal NPWP registration",
