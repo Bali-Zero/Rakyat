@@ -24,7 +24,6 @@ from backend.db.migration_base import (
     split_migration_sql,
 )
 from backend.db.migration_manager import MigrationManager
-from backend.tests.migrations.test_bonus_run_month_lock_pg import _BonusHold  # noqa: F401
 from backend.tests.migrations.test_hr_bonus_payroll_locks import (  # noqa: F401
     SCHEMA,
     Env,
@@ -150,6 +149,24 @@ async def _marked(env: Env) -> tuple[int, int]:
 
 async def _o3(env: Env) -> int:
     return await env.pool.fetchval(f"SELECT count(*) FROM hr_bonus_ledger WHERE {O3_PREDICATE}")
+
+
+@contextlib.asynccontextmanager
+async def _hold(pool: asyncpg.Pool, key: str, *, exclusive: bool = True):
+    """An open transaction holding an advisory key, as an in-flight HR writer would (T2, T3).
+
+    Every await is bounded, and the connection goes back to the pool even when taking the key fails."""
+    conn = await asyncio.wait_for(pool.acquire(), BOUND)
+    tx = conn.transaction()
+    try:
+        await asyncio.wait_for(tx.start(), BOUND)
+        fn = "pg_advisory_xact_lock" if exclusive else "pg_advisory_xact_lock_shared"
+        await asyncio.wait_for(conn.execute(f"SELECT {fn}(hashtext($1))", key), BOUND)
+        yield
+    finally:
+        with contextlib.suppress(Exception):
+            await asyncio.wait_for(tx.rollback(), BOUND)
+        await asyncio.wait_for(pool.release(conn), BOUND)
 
 
 # ─── 1: exact ──────────────────────────────────────────────────────────────────────────────────
@@ -298,22 +315,33 @@ async def test_4a_the_rollback_restores_only_the_marked_rows_that_are_still_paid
     await env.pool.execute(
         "UPDATE hr_bonus_ledger SET payroll_period_id=$2 WHERE id=$1", ids[7], period
     )
+    # one marked row was paid by a run since, and one is no longer paid: the rollback leaves both alone
+    await env.pool.execute(
+        "UPDATE hr_bonus_ledger SET bonus_run_id='2026-11-01' WHERE id=$1", ids[8]
+    )
+    await env.pool.execute("UPDATE hr_bonus_ledger SET status='approved' WHERE id=$1", ids[9])
+    moved = [ids[7], ids[8], ids[9]]
+    before_moved = await _snap(env, moved)
     before_decoys = await _snap(env, decoys.values())
     await env.pool.execute(_parts()[1])
-    restored = [i for i in ids if i != ids[7]]
+    restored = [i for i in ids if i not in moved]
     assert (
         await env.pool.fetchval(
             "SELECT count(*) FROM hr_bonus_ledger WHERE id = ANY($1::bigint[]) AND status='approved' "
             "AND notes IS NULL",
             restored,
         )
-        == COUNT - 1
+        == COUNT - 3
     )
     assert await _snap(env, restored, drop=("updated_at",)) == [
-        r for r in original if r["id"] != ids[7]
+        r for r in original if r["id"] not in moved
     ]
-    kept = await env.pool.fetchrow("SELECT status, notes FROM hr_bonus_ledger WHERE id=$1", ids[7])
-    assert (kept["status"], kept["notes"]) == ("paid", MARKER)
+    assert await _snap(env, moved) == before_moved
+    assert [(r["status"], r["notes"]) for r in before_moved] == [
+        ("paid", MARKER),
+        ("paid", MARKER),
+        ("approved", MARKER),
+    ]
     # the row that was paid by hand (no marker) stays paid; every other decoy is byte-equal
     assert await _snap(env, decoys.values()) == before_decoys
     assert (
@@ -375,9 +403,13 @@ async def _refused(sql: str, *, raised: str | None = None, relation: str | None 
     lock_timeout and statement_timeout are 60 s on this connection and the call is bounded by 15 s, so a body
     that waits for the lock fails on TimeoutError, and a lock_timeout message could never arrive in time.
     """
-    conn = await asyncpg.connect(_dsn(), server_settings={"search_path": SCHEMA})
+    conn = await asyncio.wait_for(
+        asyncpg.connect(_dsn(), server_settings={"search_path": SCHEMA}), BOUND
+    )
     try:
-        await conn.execute("SET lock_timeout = '60s'; SET statement_timeout = '60s'")
+        await asyncio.wait_for(
+            conn.execute("SET lock_timeout = '60s'; SET statement_timeout = '60s'"), BOUND
+        )
         with pytest.raises(asyncpg.exceptions.LockNotAvailableError) as busy:
             await asyncio.wait_for(conn.execute(sql), BOUND)
         assert busy.value.sqlstate == "55P03"
@@ -396,7 +428,7 @@ async def test_6a_the_allocation_lock_held_elsewhere_gives_55p03_and_changes_not
 ) -> None:
     await _seed(env)
     for exclusive in (False, True):  # an approve_bonus (shared) or a mark paid (exclusive)
-        async with _BonusHold(env.pool, "hr_bonus_payout_allocation", exclusive=exclusive):
+        async with _hold(env.pool, "hr_bonus_payout_allocation", exclusive=exclusive):
             await _refused(_parts()[0], raised=ALLOCATION_BUSY)
         assert await _marked(env) == (0, 0)
     assert await _o3(env) == COUNT
@@ -434,10 +466,10 @@ async def test_6c_a_payroll_month_held_elsewhere_gives_55p03_and_changes_nothing
     env: Env, month: str
 ) -> None:
     await _seed(env)
-    async with _BonusHold(env.pool, f"hr_payroll_month:{month}", exclusive=False):
+    async with _hold(env.pool, f"hr_payroll_month:{month}", exclusive=False):
         await _refused(_parts()[0], raised=f"400: the {month} payroll month is busy")
     assert await _o3(env) == COUNT
-    async with _BonusHold(env.pool, "hr_payroll_month:2026-11", exclusive=True):
+    async with _hold(env.pool, "hr_payroll_month:2026-11", exclusive=True):
         await asyncio.wait_for(_forward(env), BOUND)  # November is not one of its months
     assert await _marked(env) == (COUNT, TOTAL)
     await _no_stray_advisory_locks(env)
@@ -447,9 +479,9 @@ async def test_6c_a_payroll_month_held_elsewhere_gives_55p03_and_changes_nothing
 async def test_6d_the_rollback_never_waits_either(env: Env) -> None:
     await _seed(env)
     await _forward(env)
-    async with _BonusHold(env.pool, "hr_bonus_payout_allocation", exclusive=True):
+    async with _hold(env.pool, "hr_bonus_payout_allocation", exclusive=True):
         await _refused(_parts()[1], raised=ALLOCATION_BUSY)
-    async with _BonusHold(env.pool, "hr_payroll_month:2026-04", exclusive=False):
+    async with _hold(env.pool, "hr_payroll_month:2026-04", exclusive=False):
         await _refused(_parts()[1], raised="400: the 2026-04 payroll month is busy")
     ids = [
         r["id"]
@@ -574,7 +606,7 @@ async def test_8_a_busy_writer_gives_a_55p03_migration_error_and_nothing_closed(
     )  # far above BOUND: only a try-lock refuses
     await _seed(env)
     await _seed_ledgers(env)
-    async with _BonusHold(env.pool, "hr_bonus_payout_allocation", exclusive=False):
+    async with _hold(env.pool, "hr_bonus_payout_allocation", exclusive=False):
         await _refused_by_a_lock_that_does_not_wait(
             _migration().apply(database_url=_schema_dsn(), dedicated=False), raised=ALLOCATION_BUSY
         )
