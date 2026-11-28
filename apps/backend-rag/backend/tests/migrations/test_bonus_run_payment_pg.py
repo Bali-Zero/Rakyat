@@ -444,6 +444,48 @@ async def test_13_approval_holds_the_bonus_month_exclusively(env: Env, monkeypat
 
 
 @pytest.mark.asyncio
+async def test_13b_approval_takes_the_allocation_lock_before_the_month_lock(
+    env: Env, monkeypatch
+) -> None:
+    """The HR writers' order: an approval waiting on the allocation key holds no month key yet.
+
+    Observed, not timed: the approval is seen waiting on an advisory lock in pg_stat_activity, and the month
+    key is still free to a third session's try-lock (taken and released in one statement)."""
+    _today(monkeypatch, "2026-12-01")
+    task = None
+    try:
+        async with _BonusHold(env.pool, "hr_bonus_payout_allocation"):
+            task = asyncio.create_task(_run(env, approved=0, pending=0))
+            await asyncio.wait_for(_until_an_advisory_waiter(env), BOUND)
+            assert await asyncio.wait_for(
+                env.pool.fetchval(
+                    "SELECT pg_try_advisory_xact_lock_shared(hashtext('hr_bonus_month:2026-11'))"
+                ),
+                BOUND,
+            ), "the approval took the month key before the allocation key"
+        done = await asyncio.wait_for(task, BOUND)
+        assert done["run"]["status"] == "approved"
+    finally:
+        if task is not None and not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+    await _no_stray_advisory_locks(env)
+
+
+async def _until_an_advisory_waiter(env: Env) -> None:
+    """Return once another backend waits on an advisory lock; the caller bounds it with `wait_for`."""
+    while not await asyncio.wait_for(
+        env.pool.fetchval(
+            "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock' "
+            "AND wait_event='advisory' AND datname=current_database() AND pid<>pg_backend_pid()"
+        ),
+        BOUND,
+    ):
+        await asyncio.sleep(0.05)
+
+
+@pytest.mark.asyncio
 async def test_14b_a_reactivation_after_the_compare_cannot_enter_the_run(
     env: Env, monkeypatch
 ) -> None:
