@@ -6,10 +6,14 @@ from zoneinfo import ZoneInfo
 import asyncpg
 
 from backend.app.services.hr.hr_service import (
+    BONUS_RUN_FIRST_MONTH,
     BUSINESS_TZ,
     BonusPeriodLockedError,
     _lock_bonus_month,
+    _next_month,
     _refuse_if_bonus_month_closed,
+    bonus_payday,
+    paid_salary_periods,
     payroll_set_sql,
 )
 from backend.services.crm.delivery_catalog import delivery_policy
@@ -231,6 +235,50 @@ async def payroll_member(conn: asyncpg.Connection, member_id: str) -> asyncpg.Re
     )
 
 
+async def _awaiting_payment(conn: asyncpg.Connection, emp_id: int, today: date) -> list[dict]:
+    """Ended bonus months (Nov 2026 on) whose run is not paid yet and that hold money of this employee."""
+    runs = {r["bonus_month"]: r["status"] for r in await conn.fetch("SELECT * FROM hr_bonus_runs")}
+    periods = await paid_salary_periods(conn)
+    waiting, month = [], BONUS_RUN_FIRST_MONTH
+    while today >= _next_month(month):
+        status = runs.get(month, "open")
+        if status != "paid":
+            if status == "open":
+                row = await conn.fetchrow(
+                    """SELECT COALESCE(sum(amount_idr) FILTER (WHERE status='approved' AND NOT held),0)::bigint AS amount,
+                              COALESCE(sum(amount_idr) FILTER (WHERE status='pending' AND NOT held),0)::bigint AS pending
+                       FROM hr_bonus_run_inputs($1::date, $2::date) WHERE employee_id=$3""",
+                    month,
+                    today,
+                    emp_id,
+                )
+            else:
+                row = await conn.fetchrow(
+                    """SELECT COALESCE(sum(amount_idr) FILTER (WHERE bonus_run_id=$1),0)::bigint AS amount,
+                              COALESCE(sum(amount_idr) FILTER (WHERE bonus_run_id IS NULL),0)::bigint AS pending
+                       FROM hr_bonus_ledger WHERE employee_id=$2
+                         AND ((bonus_run_id=$1 AND status='approved')
+                              OR (status='pending' AND bonus_run_id IS NULL AND deferred_from IS NULL
+                                  AND date_trunc('month', awarded_at AT TIME ZONE 'Asia/Makassar')::date=$1))""",
+                    month,
+                    emp_id,
+                )
+            if row["amount"] or row["pending"]:
+                payday, waits_on = bonus_payday(month, periods)
+                waiting.append(
+                    {
+                        "bonus_month": month,
+                        "run_status": status,
+                        "amount_idr": row["amount"],
+                        "pending_idr": row["pending"],
+                        "expected_payday": payday,
+                        "payday_salary_month": waits_on,
+                    }
+                )
+        month = _next_month(month)
+    return waiting
+
+
 async def delivery_desk(conn: asyncpg.Connection, member_id: str) -> dict:
     employee = await payroll_member(conn, member_id)
     today = datetime.now(WITA).date()
@@ -296,7 +344,8 @@ async def delivery_desk(conn: asyncpg.Connection, member_id: str) -> dict:
                        WHEN o.email_state='sent' THEN 'upload_after_email'
                        ELSE 'send_escalation_email' END AS next_action
            FROM hr_visa_bonus_obligations o LEFT JOIN practice_types pt ON pt.code=o.service_code
-           WHERE o.employee_id=$1 AND (o.bound_period_id IS NOT NULL OR o.due_on <= $2)
+           WHERE o.employee_id=$1 AND (o.bound_period_id IS NOT NULL OR o.bound_run_month IS NOT NULL
+                 OR o.due_on <= $2)
            ORDER BY o.due_on, o.practice_id""",
         emp_id,
         today,
@@ -316,6 +365,7 @@ async def delivery_desk(conn: asyncpg.Connection, member_id: str) -> dict:
         labeled_holds.append(hold)
     return {
         **result,
+        "awaiting_payment": await _awaiting_payment(conn, emp_id, today),
         "holds": labeled_holds,
         "totals": dict(totals),
         "milestones": milestones,

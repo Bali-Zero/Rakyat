@@ -35,7 +35,7 @@ async def db():
             ALTER TABLE hr_employees ADD COLUMN is_active boolean DEFAULT true, ADD COLUMN profile jsonb;
             CREATE TABLE hr_bonus_rates(id serial PRIMARY KEY, practice_type_code text UNIQUE,
                 is_active boolean, effective_from date, effective_to date, amount_idr bigint);
-            CREATE TABLE hr_payroll_periods(id serial PRIMARY KEY, period_start date, payroll_month int, payroll_year int, status text);
+            CREATE TABLE hr_payroll_periods(id serial PRIMARY KEY, period_start date, payroll_month int, payroll_year int, status text, paid_at timestamptz);
             CREATE TABLE practice_types(id serial PRIMARY KEY, code text, name text);
             ALTER TABLE practices ADD COLUMN assigned_to text, ADD COLUMN practice_type_id int,
                 ADD COLUMN start_date timestamptz, ADD COLUMN created_at timestamptz DEFAULT now(), ADD COLUMN payment_status text;

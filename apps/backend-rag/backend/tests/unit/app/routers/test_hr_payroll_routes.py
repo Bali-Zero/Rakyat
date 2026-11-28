@@ -241,3 +241,21 @@ def test_a_month_that_has_not_ended_is_a_409_not_due_before_any_database_work(ma
     assert res.status_code == 409
     assert res.json()["code"] == "bonus_run_not_due"
     assert not pool.method_calls
+
+
+# ─── bonus runs (PR3b): the list ──────────────────────────────────────────────────────────────
+
+
+def test_the_bonus_run_list_is_403_for_a_non_hr_user_and_a_run_list_for_an_hr_admin(make_client):
+    runs = [{"bonus_month": "2026-11-01", "status": "open"}]
+    with patch.object(hr_router, "list_bonus_runs", new=AsyncMock(return_value=runs)):
+        assert make_client(MEMBER, AsyncMock()).get("/api/hr/bonus-runs").status_code == 403
+        client = make_client(HR_ADMIN_ONLY, AsyncMock())
+        pool, conn = (
+            MagicMock(),
+            MagicMock(),
+        )  # acquire() and transaction() are async context managers
+        pool.acquire.return_value.__aenter__.return_value = conn
+        client.app.dependency_overrides[get_database_pool] = lambda: pool
+        res = client.get("/api/hr/bonus-runs")
+    assert (res.status_code, res.json()) == (200, {"runs": runs})

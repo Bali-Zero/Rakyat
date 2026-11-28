@@ -48,6 +48,10 @@ def _next_month(month: date) -> date:
     return date(month.year + month.month // 12, month.month % 12 + 1, 1)
 
 
+def _prev(month: date) -> date:
+    return date(month.year - (month.month == 1), (month.month - 2) % 12 + 1, 1)
+
+
 #: What a manual bonus stores in practice_type_code when no service is named
 #: (the column is NOT NULL and has no foreign key).
 MANUAL_BONUS_CODE = "manual"
@@ -179,6 +183,7 @@ async def _run_figures(conn: Any, month: date, as_of: date) -> dict[str, int]:
               count(*) FILTER (WHERE i.status = 'pending' AND NOT i.held) AS pending_count,
               COALESCE(sum(i.amount_idr) FILTER (WHERE i.status = 'pending' AND NOT i.held), 0)::bigint AS pending_idr,
               count(*) FILTER (WHERE i.held) AS held_count,
+              COALESCE(sum(i.amount_idr) FILTER (WHERE i.held), 0)::bigint AS held_idr,
               count(*) FILTER (WHERE i.status = 'approved' AND NOT i.held AND s.in_set IS NOT TRUE) AS carried_count
             FROM hr_bonus_run_inputs($1::date, $2::date) i
             LEFT JOIN {_run_set_sql()} s ON s.id = i.employee_id""",
@@ -203,6 +208,86 @@ async def bonus_run_ledger_totals(conn: Any, month: date) -> dict[str, int]:
         month,
     )
     return dict(row)
+
+
+_WITA = timezone(timedelta(hours=8))
+
+
+def bonus_payday(month: date, periods: Any) -> tuple[date | None, date]:
+    """R13, display only: (expected payday of bonus `month`, the salary month it waits on).
+
+    The payday is the WITA paid date of the first salary paid after `month` ends, plus 7 days; None while
+    that salary is unpaid, and then the salary month is the earliest one from `month` on with no paid period.
+    """
+    paid = [p for p in periods if p["status"] == "paid" and p["paid_at"] is not None]
+    after = [
+        d for d in (p["paid_at"].astimezone(_WITA).date() for p in paid) if d >= _next_month(month)
+    ]
+    paid_months = {(p["payroll_year"], p["payroll_month"]) for p in paid}
+    waits_on = month
+    while (waits_on.year, waits_on.month) in paid_months:
+        waits_on = _next_month(waits_on)
+    return (min(after) + timedelta(days=7) if after else None), waits_on
+
+
+async def paid_salary_periods(conn: Any) -> list[Any]:
+    return await conn.fetch(
+        "SELECT payroll_month, payroll_year, status, paid_at FROM hr_payroll_periods WHERE status = 'paid'"
+    )
+
+
+async def list_bonus_runs(conn: Any, today: date) -> list[dict[str, Any]]:
+    """One entry per bonus month, Nov 2026 to the current WITA month (oldest first)."""
+    runs = {r["bonus_month"]: r for r in await conn.fetch("SELECT * FROM hr_bonus_runs")}
+    periods = await paid_salary_periods(conn)
+    entries, month = [], BONUS_RUN_FIRST_MONTH
+    while month <= today.replace(day=1):
+        run, ended = runs.get(month), today >= _next_month(month)
+        if run is None:
+            f = await _run_figures(conn, month, today)
+            figures = {
+                "approved_count": f["approved_count"],
+                "approved_total_idr": f["approved_idr"],
+                "pending_count": f["pending_count"],
+                "pending_total_idr": f["pending_idr"],
+                "held_count": f["held_count"],
+                "held_total_idr": f["held_idr"],
+            }
+        else:
+            t = await bonus_run_ledger_totals(conn, month)
+            pending = await conn.fetchrow(
+                """SELECT count(*) AS n, COALESCE(sum(amount_idr), 0)::bigint AS idr FROM hr_bonus_ledger
+                   WHERE status = 'pending' AND bonus_run_id IS NULL AND deferred_from IS NULL
+                     AND date_trunc('month', awarded_at AT TIME ZONE 'Asia/Makassar')::date = $1""",
+                month,
+            )
+            figures = {
+                "approved_count": t["reserved_count"],
+                "approved_total_idr": t["reserved_idr"],
+                "pending_count": pending["n"],
+                "pending_total_idr": pending["idr"],
+                "held_count": t["ever_deferred_count"],
+                "held_total_idr": t["ever_deferred_idr"],
+            }
+        payday, waits_on = bonus_payday(month, periods)
+        entries.append(
+            {
+                "bonus_month": month,
+                "status": run["status"] if run else "open",
+                "ended": ended,
+                "can_approve": run is None
+                and ended
+                and (month == BONUS_RUN_FIRST_MONTH or _prev(month) in runs),
+                "approved_at": run["approved_at"] if run else None,
+                "approved_by": run["approved_by"] if run else None,
+                "paid_at": run["paid_at"] if run else None,
+                **figures,
+                "expected_payday": payday,
+                "payday_salary_month": waits_on,
+            }
+        )
+        month = _next_month(month)
+    return entries
 
 
 ANNUAL_LEAVE_CODE = "annual"
