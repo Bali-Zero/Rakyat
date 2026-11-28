@@ -449,17 +449,18 @@ async def test_13b_approval_takes_the_allocation_lock_before_the_month_lock(
 ) -> None:
     """The HR writers' order: an approval waiting on the allocation key holds no month key yet.
 
-    Observed, not timed: the approval is seen waiting on an advisory lock in pg_stat_activity, and the month
-    key is still free to a third session's try-lock (taken and released in one statement)."""
+    Observed, not timed: the approval is seen waiting on the allocation key in pg_locks, and the month key is
+    still free to a third session's EXCLUSIVE try-lock, which fails against either mode (taken and released in
+    one statement)."""
     _today(monkeypatch, "2026-12-01")
     task = None
     try:
         async with _BonusHold(env.pool, "hr_bonus_payout_allocation"):
             task = asyncio.create_task(_run(env, approved=0, pending=0))
-            await asyncio.wait_for(_until_an_advisory_waiter(env), BOUND)
+            await asyncio.wait_for(_until_the_allocation_key_has_a_waiter(env), BOUND)
             assert await asyncio.wait_for(
                 env.pool.fetchval(
-                    "SELECT pg_try_advisory_xact_lock_shared(hashtext('hr_bonus_month:2026-11'))"
+                    "SELECT pg_try_advisory_xact_lock(hashtext('hr_bonus_month:2026-11'))"
                 ),
                 BOUND,
             ), "the approval took the month key before the allocation key"
@@ -473,12 +474,16 @@ async def test_13b_approval_takes_the_allocation_lock_before_the_month_lock(
     await _no_stray_advisory_locks(env)
 
 
-async def _until_an_advisory_waiter(env: Env) -> None:
-    """Return once another backend waits on an advisory lock; the caller bounds it with `wait_for`."""
+async def _until_the_allocation_key_has_a_waiter(env: Env) -> None:
+    """Return once a backend of this database waits for the allocation key itself (a one-bigint advisory key
+    shows in pg_locks as classid = high 32 bits, objid = low 32 bits, objsubid = 1); the caller bounds it."""
     while not await asyncio.wait_for(
         env.pool.fetchval(
-            "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type='Lock' "
-            "AND wait_event='advisory' AND datname=current_database() AND pid<>pg_backend_pid()"
+            """SELECT count(*) FROM pg_locks l, (SELECT hashtext('hr_bonus_payout_allocation')::bigint AS k) key
+               WHERE l.locktype = 'advisory' AND NOT l.granted AND l.objsubid = 1
+                 AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+                 AND l.classid = ((key.k >> 32) & 4294967295)::oid
+                 AND l.objid = (key.k & 4294967295)::oid"""
         ),
         BOUND,
     ):

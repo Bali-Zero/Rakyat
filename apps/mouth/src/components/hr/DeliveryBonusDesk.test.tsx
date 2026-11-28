@@ -558,12 +558,13 @@ describe("DeliveryBonusDesk", () => {
     const block = await screen.findByRole("region", {
       name: "Awaiting payment",
     });
-    expect(block).toHaveTextContent(
+    // each row exactly, in the server's order: a month with nothing pending says nothing about pending
+    expect(
+      Array.from(block.querySelectorAll("p")).map((p) => p.textContent),
+    ).toEqual([
       "November 2026 · Rp 240.000 gross · 7 days after the Dec 2026 salary is paid · Rp 50.000 still pending, not paid by this run",
-    );
-    expect(block).toHaveTextContent(
       "December 2026 · Rp 90.000 gross · Expected 25 Dec 2026",
-    );
+    ]);
     expect(block).not.toHaveTextContent(/tax|PPh/i);
     expect(screen.getByText("Bonuses this month")).toBeVisible();
     expect(screen.getByText("1 · Month closed · HR review")).toBeVisible();

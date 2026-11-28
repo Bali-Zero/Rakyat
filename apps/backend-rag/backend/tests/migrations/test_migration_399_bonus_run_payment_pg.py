@@ -448,36 +448,38 @@ async def test_15c_the_rollback_refuses_a_december_approval_that_straddles_the_m
     await _row(env, "pending", DEC)
     period = (await env.svc.calculate_payroll(12, 2026, env.admin))["period_id"]
     forward = _parts()[0]
-    async with env.pool.acquire() as t:  # T1/T3: every await on either connection is bounded
+    # T1/T3: every await on either connection is bounded, the acquire and the release included
+    t = await asyncio.wait_for(env.pool.acquire(), BOUND)
+    try:
         tx = t.transaction()
         await asyncio.wait_for(tx.start(), BOUND)
-        try:
-            await asyncio.wait_for(t.fetchval("SELECT now()"), BOUND)
-            # 399 applies and commits while T is open
-            await asyncio.wait_for(env.pool.execute(forward), BOUND)
-            await asyncio.wait_for(
-                env.pool.execute(
-                    "CREATE TABLE _schema_versions (id serial PRIMARY KEY, migration_name text UNIQUE, "
-                    "migration_number int NOT NULL, executed_at timestamptz DEFAULT now())"
-                ),
-                BOUND,
-            )
-            await asyncio.wait_for(
-                env.pool.execute(
-                    "INSERT INTO _schema_versions(migration_name, migration_number) "
-                    "VALUES ('399_bonus_run_payment', 399)"
-                ),
-                BOUND,
-            )
-            await asyncio.wait_for(
-                t.execute("UPDATE hr_payroll_periods SET status='approved' WHERE id=$1", period),
-                BOUND,
-            )
-            await asyncio.wait_for(tx.commit(), BOUND)
-        finally:
-            if t.is_in_transaction():
-                with contextlib.suppress(Exception):
-                    await asyncio.wait_for(tx.rollback(), BOUND)
+        await asyncio.wait_for(t.fetchval("SELECT now()"), BOUND)
+        # 399 applies and commits while T is open
+        await asyncio.wait_for(env.pool.execute(forward), BOUND)
+        await asyncio.wait_for(
+            env.pool.execute(
+                "CREATE TABLE _schema_versions (id serial PRIMARY KEY, migration_name text UNIQUE, "
+                "migration_number int NOT NULL, executed_at timestamptz DEFAULT now())"
+            ),
+            BOUND,
+        )
+        await asyncio.wait_for(
+            env.pool.execute(
+                "INSERT INTO _schema_versions(migration_name, migration_number) "
+                "VALUES ('399_bonus_run_payment', 399)"
+            ),
+            BOUND,
+        )
+        await asyncio.wait_for(
+            t.execute("UPDATE hr_payroll_periods SET status='approved' WHERE id=$1", period),
+            BOUND,
+        )
+        await asyncio.wait_for(tx.commit(), BOUND)
+    finally:
+        if t.is_in_transaction():
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(tx.rollback(), BOUND)
+        await env.pool.release(t, timeout=BOUND)
     assert await env.pool.fetchval(
         "SELECT approved_at < (SELECT executed_at FROM _schema_versions) FROM hr_payroll_periods"
     )
