@@ -166,7 +166,9 @@ class Settings(BaseSettings):
     # Reviewers of the service cards: each gets one email when a consultant asks a client for a
     # document outside the card (spec BLOCK-1-VISA, V2). Comma-separated `address` or
     # `address:lang`, lang `en` or `id` (default `id`). Empty = nobody is told; the request
-    # still succeeds. Set via SERVICE_CARD_REVIEWER_EMAILS; never write an address in code.
+    # still succeeds. A listed address may also decide the requests (list, add to the card,
+    # keep for one case, reopen) when its login is a person on the team; with the setting empty
+    # only CRM admins decide. Set via SERVICE_CARD_REVIEWER_EMAILS; never write an address in code.
     service_card_reviewer_emails: str = ""
 
     deepseek_api_key: str | None = Field(default=None, description="DeepSeek API Key")
