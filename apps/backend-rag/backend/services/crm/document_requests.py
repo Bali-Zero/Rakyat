@@ -399,7 +399,7 @@ _LIST_FROM = """
 """
 _PENDING_FILTER = """
     WHERE r.decision = 'pending'
-      AND lower(coalesce(p.status, '')) NOT IN ('cancelled', 'canceled')
+      AND lower(btrim(coalesce(p.status, ''), E' \\t\\n\\r\\f\\v')) NOT IN ('cancelled', 'canceled')
       AND EXISTS (SELECT 1 FROM practice_required_documents d WHERE d.id = r.required_document_id)
 """
 _DECIDED_FILTER = "WHERE r.decision <> 'pending'"

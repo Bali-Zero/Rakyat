@@ -228,6 +228,24 @@ async def test_the_pending_list_leaves_out_a_cancelled_practice_and_a_withdrawn_
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status", ["cancelled", "Canceled", " Cancelled ", "CANCELLED\n", "\tcanceled\r\n"]
+)
+async def test_a_cancelled_status_is_read_as_the_first_cut_reads_it(
+    world: World, status: str
+) -> None:
+    """The first cut closes a practice on ``status.strip().lower()``; the pending list hides the
+    same practices, whatever the case and the whitespace around the word."""
+    await world.card(world.a)
+    practice = await world.practice(world.a)
+    asked = await world.ask(practice, "zz_padded")
+    await world.conn.execute("UPDATE practices SET status = $2 WHERE id = $1", practice, status)
+
+    answer = await _list(world)
+    assert asked.request_id not in {item["id"] for item in answer["items"]}
+
+
+@pytest.mark.asyncio
 async def test_seen_count_counts_only_earlier_requests_inside_ninety_days(world: World) -> None:
     practices = [await world.practice(world.a) for _ in range(4)]
     other_type = await world.practice(world.b)
